@@ -1,182 +1,188 @@
-use evdev::{AbsoluteAxisType, Device, EventType, Key};
-use std::collections::HashMap;
-use std::io::{self, Write};
+mod devices;
 
-fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let devices = discover_joystick_devices()?;
+use std::{collections::HashMap, time::Duration};
 
-    if devices.is_empty() {
-        println!("No joystick devices found!");
-        return Ok(());
-    }
+use color_eyre::Result;
+use evdev::{Device, EventType};
+use ratatui::{
+    DefaultTerminal,
+    buffer::Buffer,
+    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    layout::{Alignment, Constraint, Layout, Rect},
+    style::{Color, Stylize, palette::tailwind},
+    text::Line,
+    widgets::{Block, Borders, Gauge, Paragraph, Widget},
+};
 
-    let device_path = select_device(&devices)?;
-    let mut device = Device::open(&device_path)?;
-    monitor_device(&mut device)?;
+const GAUGE_COLOR: Color = tailwind::BLUE.c500;
+const LABEL_COLOR: Color = tailwind::SLATE.c200;
 
-    Ok(())
+#[derive(Debug)]
+struct App {
+    state: AppState,
+    device: Option<Device>,
+    axis_values: HashMap<u16, i32>,
 }
 
-fn discover_joystick_devices() -> Result<Vec<(Device, String)>, Box<dyn std::error::Error>> {
-    let mut joystick_devices = Vec::new();
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+enum AppState {
+    #[default]
+    DeviceSelection,
+    Running,
+    Quitting,
+}
 
-    for entry in std::fs::read_dir("/dev/input")? {
-        let entry = entry?;
-        let path = entry.path();
+fn main() -> Result<()> {
+    color_eyre::install()?;
 
-        if let Some(filename) = path.file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                if filename_str.starts_with("event") {
-                    if let Ok(device) = Device::open(&path) {
-                        if is_joystick_device(&device) {
-                            joystick_devices.push((device, path.to_string_lossy().to_string()));
-                        }
+    let devices = devices::discover_joystick_devices().map_err(|e| {
+        eprintln!("Error discovering joystick devices: {}", e);
+        color_eyre::eyre::eyre!("Failed to discover joystick devices: {}", e)
+    })?;
+
+    if devices.is_empty() {
+        return Err(color_eyre::eyre::eyre!("No joystick devices found!"));
+    }
+
+    let device_path = devices::select_device(&devices).map_err(|e| {
+        eprintln!("Error selecting device: {}", e);
+        color_eyre::eyre::eyre!("Failed to select device: {}", e)
+    })?;
+
+    let mut device = Device::open(&device_path).map_err(|e| {
+        eprintln!("Error opening device: {}", e);
+        color_eyre::eyre::eyre!("Failed to open device: {}", e)
+    })?;
+
+    device.set_nonblocking(true).map_err(|e| {
+        eprintln!("Error setting non-blocking mode: {}", e);
+        color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
+    })?;
+
+    let app = App {
+        state: AppState::Running,
+        device: Some(device),
+        axis_values: HashMap::new(),
+    };
+
+    let terminal = ratatui::init();
+
+    let app_result = app.run(terminal);
+    ratatui::restore();
+
+    app_result
+}
+
+impl App {
+    fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
+        while self.state != AppState::Quitting {
+            terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
+            self.handle_events()?;
+            self.update();
+        }
+        Ok(())
+    }
+
+    fn update(&mut self) {
+        if self.state == AppState::Quitting {
+            return;
+        }
+
+        if let Some(ref mut device) = self.device {
+            if let Ok(events) = device.fetch_events() {
+                for event in events {
+                    if event.event_type() == EventType::ABSOLUTE {
+                        let code = event.code();
+                        let value = event.value();
+                        self.axis_values.insert(code, value);
                     }
                 }
             }
         }
     }
 
-    Ok(joystick_devices)
-}
-
-fn is_joystick_device(device: &Device) -> bool {
-    let supported_events = device.supported_events();
-
-    // Must support absolute positioning (analog sticks/triggers)
-    if !supported_events.contains(EventType::ABSOLUTE) {
-        return false;
-    }
-
-    // Check for joystick-specific absolute axes
-    let has_joystick_axes = device.supported_absolute_axes().map_or(false, |axes| {
-        // Look for typical joystick axes
-        axes.contains(AbsoluteAxisType::ABS_X) && axes.contains(AbsoluteAxisType::ABS_Y)
-            || axes.contains(AbsoluteAxisType::ABS_RX) && axes.contains(AbsoluteAxisType::ABS_RY)
-            || axes.contains(AbsoluteAxisType::ABS_HAT0X)
-            || axes.contains(AbsoluteAxisType::ABS_HAT0Y)
-    });
-
-    // Check for gamepad buttons (using raw button codes)
-    let has_gamepad_buttons = device.supported_keys().map_or(false, |keys| {
-        // Check for common gamepad button codes
-        keys.contains(Key::new(0x130)) || // BTN_A
-        keys.contains(Key::new(0x131)) || // BTN_B
-        keys.contains(Key::new(0x132)) || // BTN_C
-        keys.contains(Key::new(0x133)) || // BTN_X
-        keys.contains(Key::new(0x134)) || // BTN_Y
-        keys.contains(Key::new(0x135)) || // BTN_Z
-        keys.contains(Key::new(0x136)) || // BTN_TL
-        keys.contains(Key::new(0x137)) || // BTN_TR
-        keys.contains(Key::new(0x13a)) || // BTN_START
-        keys.contains(Key::new(0x13b)) // BTN_SELECT
-    });
-
-    // Accept devices that have joystick axes OR gamepad buttons
-    has_joystick_axes || has_gamepad_buttons
-}
-
-fn select_device(devices: &[(Device, String)]) -> Result<String, Box<dyn std::error::Error>> {
-    println!("Found {} joystick device(s):\n", devices.len());
-
-    for (i, (device, path)) in devices.iter().enumerate() {
-        let name = device.name().unwrap_or("Unknown Device");
-        println!("{}. {} ({})", i + 1, name, path);
-    }
-
-    print!("\nSelect a device (1-{}): ", devices.len());
-    io::stdout().flush()?;
-
-    let mut input = String::new();
-    io::stdin().read_line(&mut input)?;
-
-    let selection: usize = input.trim().parse()?;
-
-    if selection == 0 || selection > devices.len() {
-        return Err("Invalid selection".into());
-    }
-
-    println!(
-        "\nSelected: {}\n",
-        devices[selection - 1].0.name().unwrap_or("Unknown")
-    );
-
-    Ok(devices[selection - 1].1.clone())
-}
-
-fn monitor_device(device: &mut Device) -> Result<(), Box<dyn std::error::Error>> {
-    println!("Monitoring device. Press Ctrl+C to exit.\n");
-
-    let mut axis_values: HashMap<u16, i32> = HashMap::new();
-    let mut button_states: HashMap<u16, bool> = HashMap::new();
-
-    loop {
-        for event in device.fetch_events()? {
-            match event.event_type() {
-                EventType::ABSOLUTE => {
-                    let code = event.code();
-                    let value = event.value();
-                    axis_values.insert(code, value);
-                    print_status(&axis_values, &button_states);
+    fn handle_events(&mut self) -> Result<()> {
+        let timeout = Duration::from_secs_f32(1.0 / 20.0);
+        if event::poll(timeout)? {
+            if let Event::Key(key) = event::read()? {
+                if key.kind == KeyEventKind::Press {
+                    match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+                        _ => {}
+                    }
                 }
-                EventType::KEY => {
-                    let code = event.code();
-                    let pressed = event.value() == 1;
-                    button_states.insert(code, pressed);
-                    print_status(&axis_values, &button_states);
-                }
-                _ => {}
             }
         }
+        Ok(())
+    }
+
+    fn quit(&mut self) {
+        self.state = AppState::Quitting;
+    }
+
+    fn get_axis_value(&self, axis_code: u16) -> (i32, f64) {
+        let value = self.axis_values.get(&axis_code).copied().unwrap_or(0);
+        // Normalize typical joystick range (-32768 to 32767) to 0.0-1.0
+        let normalized = ((value + 32768) as f64) / 65535.0;
+        (value, normalized.clamp(0.0, 1.0))
     }
 }
 
-fn print_status(axis_values: &HashMap<u16, i32>, button_states: &HashMap<u16, bool>) {
-    print!("\x1B[2J\x1B[1;1H");
-    println!("=== Joystick Monitor ===\n");
+impl Widget for &App {
+    #[allow(clippy::similar_names)]
+    fn render(self, area: Rect, buf: &mut Buffer) {
+        use Constraint::{Length, Ratio};
 
-    if !axis_values.is_empty() {
-        println!("Axes:");
-        for (&code, &value) in axis_values {
-            let axis_name = match code {
-                0 => "Left X",
-                1 => "Left Y",
-                2 => "Right X",
-                3 => "Right Y",
-                4 => "Left Trigger",
-                5 => "Right Trigger",
-                16 => "D-Pad X",
-                17 => "D-Pad Y",
-                _ => "Unknown",
-            };
-            println!("  {}: {} (raw: {})", axis_name, value, code);
-        }
-        println!();
+        let layout = Layout::vertical([Length(2), Length(16), Length(1)]);
+        let [header_area, gauge_area, footer_area] = layout.areas(area);
+
+        let layout = Layout::vertical([Ratio(1, 4); 4]);
+        let [gauge1_area, gauge2_area, gauge3_area, gauge4_area] = layout.areas(gauge_area);
+
+        render_header(header_area, buf);
+        render_footer(footer_area, buf);
+
+        self.render_gauge(0, "Left X Axis", gauge1_area, buf);
+        self.render_gauge(1, "Left Y Axis", gauge2_area, buf);
+        self.render_gauge(3, "Right X Axis", gauge3_area, buf);
+        self.render_gauge(4, "Right Y Axis", gauge4_area, buf);
     }
+}
 
-    if !button_states.is_empty() {
-        println!("Buttons:");
-        for (&code, &pressed) in button_states {
-            if pressed {
-                let button_name = match code {
-                    304 => "A/X",
-                    305 => "B/Circle",
-                    306 => "X/Square",
-                    307 => "Y/Triangle",
-                    308 => "L1/LB",
-                    309 => "R1/RB",
-                    310 => "Back/Select",
-                    311 => "Start",
-                    312 => "Home/Guide",
-                    313 => "Left Stick",
-                    314 => "Right Stick",
-                    _ => "Unknown",
-                };
-                println!("  {} ({}): PRESSED", button_name, code);
-            }
-        }
-        println!();
+fn render_header(area: Rect, buf: &mut Buffer) {
+    Paragraph::new("Joystick Monitor - Live Axis Values")
+        .bold()
+        .alignment(Alignment::Center)
+        .fg(LABEL_COLOR)
+        .render(area, buf);
+}
+
+fn render_footer(area: Rect, buf: &mut Buffer) {
+    Paragraph::new("Press 'q' or ESC to quit")
+        .alignment(Alignment::Center)
+        .fg(LABEL_COLOR)
+        .bold()
+        .render(area, buf);
+}
+
+impl App {
+    fn render_gauge(&self, axis_code: u16, title: &str, area: Rect, buf: &mut Buffer) {
+        let (value, normalized) = self.get_axis_value(axis_code);
+
+        Gauge::default()
+            .block(title_block(title))
+            .gauge_style(GAUGE_COLOR)
+            .ratio(normalized)
+            .label(format!("{}", value))
+            .render(area, buf);
     }
+}
 
-    println!("Press Ctrl+C to exit");
+fn title_block(title: &str) -> Block {
+    let title = Line::from(title).centered();
+
+    Block::new()
+        .borders(Borders::NONE)
+        .title(title)
+        .fg(LABEL_COLOR)
 }
