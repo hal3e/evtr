@@ -48,22 +48,52 @@ enum AppState {
     #[default]
     DeviceSelection,
     Running,
+    BackToSelection,
     Quitting,
 }
 
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let device = select_device().map_err(|e| {
-        eprintln!("Error opening device: {}", e);
-        color_eyre::eyre::eyre!("Failed to open device: {}", e)
-    })?;
+    loop {
+        let device = match select_device() {
+            Ok(device) => device,
+            Err(e) => {
+                eprintln!("Error selecting device: {}", e);
+                break;
+            }
+        };
 
-    device.set_nonblocking(true).map_err(|e| {
-        eprintln!("Error setting non-blocking mode: {}", e);
-        color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
-    })?;
+        let mut device = device;
+        device.set_nonblocking(true).map_err(|e| {
+            eprintln!("Error setting non-blocking mode: {}", e);
+            color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
+        })?;
 
+        let app = create_app_with_device(device)?;
+        let terminal = ratatui::init();
+
+        let app_result = app.run(terminal);
+        ratatui::restore();
+
+        match app_result {
+            Ok(should_continue) => {
+                if !should_continue {
+                    break;
+                }
+                // Continue loop to show device selection again
+            }
+            Err(e) => {
+                eprintln!("App error: {}", e);
+                break;
+            }
+        }
+    }
+
+    Ok(())
+}
+
+fn create_app_with_device(device: evdev::Device) -> Result<App> {
     // Get all available axes from the device
     let mut axes = Vec::new();
     let mut initial_axis_values = HashMap::new();
@@ -114,31 +144,26 @@ fn main() -> Result<()> {
         }
     }
 
-    let app = App {
+    Ok(App {
         state: AppState::Running,
         device: Some(device),
         axis_values: initial_axis_values,
         axes,
         button_states: initial_button_states,
         buttons,
-    };
-
-    let terminal = ratatui::init();
-
-    let app_result = app.run(terminal);
-    ratatui::restore();
-
-    app_result
+    })
 }
 
 impl App {
-    fn run(mut self, mut terminal: DefaultTerminal) -> Result<()> {
-        while self.state != AppState::Quitting {
+    fn run(mut self, mut terminal: DefaultTerminal) -> Result<bool> {
+        while self.state != AppState::Quitting && self.state != AppState::BackToSelection {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             self.handle_events()?;
             self.update();
         }
-        Ok(())
+
+        // Return true if we should continue (back to selection), false if we should quit
+        Ok(self.state == AppState::BackToSelection)
     }
 
     fn update(&mut self) {
@@ -183,7 +208,7 @@ impl App {
     }
 
     fn quit(&mut self) {
-        self.state = AppState::Quitting;
+        self.state = AppState::BackToSelection;
     }
 
     fn get_axis_value(&self, axis_code: u16) -> (i32, f64) {
