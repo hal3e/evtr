@@ -1,62 +1,50 @@
-use evdev::{AbsoluteAxisCode, Device, EventType};
+use evdev::{AbsoluteAxisCode, Device, KeyCode};
 use std::io::{self, Write};
 
-pub fn discover_joystick_devices() -> Result<Vec<(Device, String)>, Box<dyn std::error::Error>> {
-    let mut joystick_devices = Vec::new();
+pub fn discover_joystick_devices() -> Vec<Device> {
+    let mut joystick_devices = evdev::enumerate()
+        .map(|t| t.1)
+        .filter(is_joystick_device)
+        .collect::<Vec<_>>();
 
-    for entry in std::fs::read_dir("/dev/input")? {
-        let entry = entry?;
-        let path = entry.path();
+    joystick_devices.reverse();
 
-        if let Some(filename) = path.file_name() {
-            if let Some(filename_str) = filename.to_str() {
-                if filename_str.starts_with("event") {
-                    if let Ok(device) = Device::open(&path) {
-                        if is_joystick_device(&device) {
-                            joystick_devices.push((device, path.to_string_lossy().to_string()));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    Ok(joystick_devices)
+    joystick_devices
 }
 
 pub fn is_joystick_device(device: &Device) -> bool {
-    let supported_events = device.supported_events();
-
-    // Must support absolute positioning (analog sticks/triggers)
-    if !supported_events.contains(EventType::ABSOLUTE) {
-        return false;
-    }
-
-    // Check for joystick-specific absolute axes
     let has_joystick_axes = device.supported_absolute_axes().map_or(false, |axes| {
-        // Look for typical joystick axes
         axes.contains(AbsoluteAxisCode::ABS_X) && axes.contains(AbsoluteAxisCode::ABS_Y)
             || axes.contains(AbsoluteAxisCode::ABS_RX) && axes.contains(AbsoluteAxisCode::ABS_RY)
             || axes.contains(AbsoluteAxisCode::ABS_HAT0X)
-            || axes.contains(AbsoluteAxisCode::ABS_HAT0Y)
+                && axes.contains(AbsoluteAxisCode::ABS_HAT0Y)
     });
 
-    // Check for gamepad buttons - if it has key events, assume it might be a gamepad
-    let has_gamepad_buttons = device.supported_events().contains(EventType::KEY);
+    let has_joystick_keys = device.supported_keys().map_or(false, |keys| {
+        keys.contains(KeyCode::BTN_EAST) && keys.contains(KeyCode::BTN_WEST)
+            || keys.contains(KeyCode::BTN_NORTH) && keys.contains(KeyCode::BTN_SOUTH)
+            || keys.contains(KeyCode::BTN_THUMB) && keys.contains(KeyCode::BTN_THUMB2)
+            || keys.contains(KeyCode::BTN_TOP) && keys.contains(KeyCode::BTN_TOP2)
+    });
 
-    // Accept devices that have joystick axes OR gamepad buttons
-    has_joystick_axes || has_gamepad_buttons
+    has_joystick_axes && has_joystick_keys
 }
 
-pub fn select_device(devices: &[(Device, String)]) -> Result<String, Box<dyn std::error::Error>> {
-    println!("Found {} joystick device(s):\n", devices.len());
+pub fn select_device() -> Result<Device, Box<dyn std::error::Error>> {
+    let joystick_devices = discover_joystick_devices();
 
-    for (i, (device, path)) in devices.iter().enumerate() {
-        let name = device.name().unwrap_or("Unknown Device");
-        println!("{}. {} ({})", i + 1, name, path);
+    if joystick_devices.is_empty() {
+        return Err("No joystick devices found!".into());
     }
 
-    print!("\nSelect a device (1-{}): ", devices.len());
+    println!("Found {} joystick device(s):\n", joystick_devices.len());
+
+    for (i, device) in joystick_devices.iter().enumerate() {
+        let name = device.name().unwrap_or("Unknown Device");
+        println!("{i}. {name}");
+    }
+
+    print!("\nSelect a device (0-{}): ", joystick_devices.len() - 1);
     io::stdout().flush()?;
 
     let mut input = String::new();
@@ -64,14 +52,12 @@ pub fn select_device(devices: &[(Device, String)]) -> Result<String, Box<dyn std
 
     let selection: usize = input.trim().parse()?;
 
-    if selection == 0 || selection > devices.len() {
+    if selection >= joystick_devices.len() {
         return Err("Invalid selection".into());
     }
 
-    println!(
-        "\nSelected: {}\n",
-        devices[selection - 1].0.name().unwrap_or("Unknown")
-    );
-
-    Ok(devices[selection - 1].1.clone())
+    Ok(joystick_devices
+        .into_iter()
+        .nth(selection)
+        .expect("already checked bounds"))
 }

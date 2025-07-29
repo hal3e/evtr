@@ -14,6 +14,8 @@ use ratatui::{
     widgets::{Block, Borders, Gauge, Paragraph, Widget},
 };
 
+use crate::devices::select_device;
+
 const GAUGE_COLOR: Color = tailwind::BLUE.c500;
 const LABEL_COLOR: Color = tailwind::SLATE.c200;
 
@@ -52,21 +54,7 @@ enum AppState {
 fn main() -> Result<()> {
     color_eyre::install()?;
 
-    let devices = devices::discover_joystick_devices().map_err(|e| {
-        eprintln!("Error discovering joystick devices: {}", e);
-        color_eyre::eyre::eyre!("Failed to discover joystick devices: {}", e)
-    })?;
-
-    if devices.is_empty() {
-        return Err(color_eyre::eyre::eyre!("No joystick devices found!"));
-    }
-
-    let device_path = devices::select_device(&devices).map_err(|e| {
-        eprintln!("Error selecting device: {}", e);
-        color_eyre::eyre::eyre!("Failed to select device: {}", e)
-    })?;
-
-    let device = Device::open(&device_path).map_err(|e| {
+    let device = select_device().map_err(|e| {
         eprintln!("Error opening device: {}", e);
         color_eyre::eyre::eyre!("Failed to open device: {}", e)
     })?;
