@@ -4,19 +4,18 @@ use std::{collections::HashMap, time::Duration};
 
 use color_eyre::Result;
 use evdev::{AbsoluteAxisCode, Device, EventType};
+use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind},
+    crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     layout::{Alignment, Constraint, Layout, Rect},
-    style::{Color, Stylize, palette::tailwind},
+    style::{Color, Style, Stylize, palette::tailwind},
     text::Line,
-    widgets::{Block, Borders, Gauge, Paragraph, Widget},
+    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Widget},
 };
 
-use crate::devices::select_device;
-
-const GAUGE_COLOR: Color = tailwind::BLUE.c500;
+const GAUGE_COLOR: Color = tailwind::BLUE.c400;
 const LABEL_COLOR: Color = tailwind::SLATE.c200;
 
 #[derive(Debug)]
@@ -34,6 +33,33 @@ struct ButtonInfo {
 }
 
 #[derive(Debug)]
+struct DeviceInfo {
+    _device: Device, //TODO: use device and do not open again
+    name: String,
+    path: String,
+}
+
+struct DeviceSelector {
+    devices: Vec<DeviceInfo>,
+    filtered_devices: Vec<usize>, // indices into devices
+    selected_index: usize,
+    search_query: String,
+    matcher: SkimMatcherV2,
+    list_state: ListState,
+}
+
+impl std::fmt::Debug for DeviceSelector {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("DeviceSelector")
+            .field("devices_count", &self.devices.len())
+            .field("filtered_count", &self.filtered_devices.len())
+            .field("selected_index", &self.selected_index)
+            .field("search_query", &self.search_query)
+            .finish()
+    }
+}
+
+#[derive(Debug)]
 struct App {
     state: AppState,
     device: Option<Device>,
@@ -41,6 +67,7 @@ struct App {
     axes: Vec<AxisInfo>,
     button_states: HashMap<u16, bool>,
     buttons: Vec<ButtonInfo>,
+    device_selector: Option<DeviceSelector>,
 }
 
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -55,26 +82,35 @@ enum AppState {
 fn main() -> Result<()> {
     color_eyre::install()?;
 
+    let terminal = ratatui::init();
+    let result = run_app_loop(terminal);
+    ratatui::restore();
+
+    result
+}
+
+fn run_app_loop(mut terminal: DefaultTerminal) -> Result<()> {
     loop {
-        let device = match select_device() {
-            Ok(device) => device,
+        // Create app with device selection state
+        let device_selector = match DeviceSelector::new() {
+            Ok(selector) => selector,
             Err(e) => {
-                eprintln!("Error selecting device: {}", e);
+                eprintln!("Error discovering devices: {e}");
                 break;
             }
         };
 
-        let mut device = device;
-        device.set_nonblocking(true).map_err(|e| {
-            eprintln!("Error setting non-blocking mode: {}", e);
-            color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
-        })?;
+        let app = App {
+            state: AppState::DeviceSelection,
+            device: None,
+            axis_values: HashMap::new(),
+            axes: Vec::new(),
+            button_states: HashMap::new(),
+            buttons: Vec::new(),
+            device_selector: Some(device_selector),
+        };
 
-        let app = create_app_with_device(device)?;
-        let terminal = ratatui::init();
-
-        let app_result = app.run(terminal);
-        ratatui::restore();
+        let app_result = app.run(&mut terminal);
 
         match app_result {
             Ok(should_continue) => {
@@ -84,7 +120,7 @@ fn main() -> Result<()> {
                 // Continue loop to show device selection again
             }
             Err(e) => {
-                eprintln!("App error: {}", e);
+                eprintln!("App error: {e}");
                 break;
             }
         }
@@ -102,21 +138,21 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
             let code = axis_type.0;
             let name = format!("{:?}", AbsoluteAxisCode(code));
 
-            // Try to get axis info including min/max values
-            let (min, max, center) = if let Ok(abs_state) = device.get_abs_state() {
+            // Try to get axis info including min/max values and current value
+            let (min, max, current_value) = if let Ok(abs_state) = device.get_abs_state() {
                 if code < abs_state.len() as u16 {
                     let info = &abs_state[code as usize];
                     let min = info.minimum;
                     let max = info.maximum;
-                    let center = (min + max) / 2;
-                    (min, max, center)
+                    let current = info.value;
+                    (min, max, current)
                 } else {
                     // Default range if index out of bounds
-                    (-32768, 32767, -1)
+                    (-32768, 32767, 0)
                 }
             } else {
                 // Default range if no state available
-                (-32768, 32767, -1)
+                (-32768, 32767, 0)
             };
 
             axes.push(AxisInfo {
@@ -125,7 +161,7 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
                 min,
                 max,
             });
-            initial_axis_values.insert(code, center);
+            initial_axis_values.insert(code, current_value);
         }
     }
 
@@ -138,7 +174,7 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
 
             buttons.push(ButtonInfo {
                 code,
-                name: format!("{:?}", key),
+                name: format!("{key:?}"),
             });
             initial_button_states.insert(code, false);
         }
@@ -151,11 +187,97 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
         axes,
         button_states: initial_button_states,
         buttons,
+        device_selector: None,
     })
 }
 
+impl DeviceSelector {
+    fn new() -> Result<Self> {
+        let devices: Vec<DeviceInfo> = evdev::enumerate()
+            .filter(|(_, device)| devices::is_joystick_device(device))
+            .map(|(path, device)| {
+                let name = device.name().unwrap_or("Unknown Device").to_string();
+                let path_str = path.to_string_lossy().to_string();
+                DeviceInfo {
+                    _device: device,
+                    name,
+                    path: path_str,
+                }
+            })
+            .collect();
+
+        if devices.is_empty() {
+            return Err(color_eyre::eyre::eyre!("No joystick devices found!"));
+        }
+
+        let filtered_devices = (0..devices.len()).collect();
+        let mut list_state = ListState::default();
+        list_state.select(Some(0));
+
+        Ok(Self {
+            devices,
+            filtered_devices,
+            selected_index: 0,
+            search_query: String::new(),
+            matcher: SkimMatcherV2::default(),
+            list_state,
+        })
+    }
+
+    fn update_filter(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_devices = (0..self.devices.len()).collect();
+        } else {
+            let mut scored_devices: Vec<(usize, i64)> = self
+                .devices
+                .iter()
+                .enumerate()
+                .filter_map(|(i, device)| {
+                    self.matcher
+                        .fuzzy_match(&device.name, &self.search_query)
+                        .map(|score| (i, score))
+                })
+                .collect();
+
+            // Sort by score (higher is better)
+            scored_devices.sort_by(|a, b| b.1.cmp(&a.1));
+            self.filtered_devices = scored_devices.into_iter().map(|(i, _)| i).collect();
+        }
+
+        // Reset selection to first item
+        self.selected_index = 0;
+        self.list_state.select(Some(0));
+    }
+
+    fn navigate_up(&mut self) {
+        if !self.filtered_devices.is_empty() && self.selected_index > 0 {
+            self.selected_index -= 1;
+            self.list_state.select(Some(self.selected_index));
+        }
+    }
+
+    fn navigate_down(&mut self) {
+        if !self.filtered_devices.is_empty()
+            && self.selected_index < self.filtered_devices.len() - 1
+        {
+            self.selected_index += 1;
+            self.list_state.select(Some(self.selected_index));
+        }
+    }
+
+    fn add_char(&mut self, c: char) {
+        self.search_query.push(c);
+        self.update_filter();
+    }
+
+    fn remove_char(&mut self) {
+        self.search_query.pop();
+        self.update_filter();
+    }
+}
+
 impl App {
-    fn run(mut self, mut terminal: DefaultTerminal) -> Result<bool> {
+    fn run(mut self, terminal: &mut DefaultTerminal) -> Result<bool> {
         while self.state != AppState::Quitting && self.state != AppState::BackToSelection {
             terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             self.handle_events()?;
@@ -197,8 +319,14 @@ impl App {
         if event::poll(timeout)? {
             if let Event::Key(key) = event::read()? {
                 if key.kind == KeyEventKind::Press {
-                    match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+                    match self.state {
+                        AppState::DeviceSelection => {
+                            self.handle_device_selection_input(key.code, key.modifiers)?;
+                        }
+                        AppState::Running => match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+                            _ => {}
+                        },
                         _ => {}
                     }
                 }
@@ -207,8 +335,68 @@ impl App {
         Ok(())
     }
 
+    fn handle_device_selection_input(
+        &mut self,
+        key_code: KeyCode,
+        modifiers: KeyModifiers,
+    ) -> Result<()> {
+        if let Some(selector) = &mut self.device_selector {
+            match key_code {
+                KeyCode::Esc => {
+                    self.state = AppState::Quitting;
+                }
+                KeyCode::Enter => {
+                    if !selector.filtered_devices.is_empty() {
+                        let device_index = selector.filtered_devices[selector.selected_index];
+                        let device_info = &selector.devices[device_index];
+
+                        // Reopen the device to get an owned copy
+                        let device = Device::open(&device_info.path).map_err(|e| {
+                            color_eyre::eyre::eyre!("Failed to reopen device: {}", e)
+                        })?;
+
+                        device.set_nonblocking(true).map_err(|e| {
+                            color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
+                        })?;
+
+                        *self = create_app_with_device(device)?;
+                        self.state = AppState::Running;
+                    }
+                }
+                KeyCode::Up => {
+                    selector.navigate_up();
+                }
+                KeyCode::Down => {
+                    selector.navigate_down();
+                }
+                KeyCode::Backspace => {
+                    selector.remove_char();
+                }
+                KeyCode::Char('p') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    selector.navigate_up();
+                }
+                KeyCode::Char('n') if modifiers.contains(KeyModifiers::CONTROL) => {
+                    selector.navigate_down();
+                }
+                KeyCode::Char(c) => {
+                    selector.add_char(c);
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+
     fn quit(&mut self) {
-        self.state = AppState::BackToSelection;
+        match self.state {
+            AppState::DeviceSelection => {
+                self.state = AppState::Quitting;
+            }
+            AppState::Running => {
+                self.state = AppState::BackToSelection;
+            }
+            _ => {}
+        }
     }
 
     fn get_axis_value(&self, axis_code: u16) -> (i32, f64) {
@@ -233,13 +421,116 @@ impl App {
 
 impl Widget for &App {
     fn render(self, area: Rect, buf: &mut Buffer) {
+        match self.state {
+            AppState::DeviceSelection => {
+                if let Some(selector) = &self.device_selector {
+                    self.render_device_selection(selector, area, buf);
+                }
+            }
+            AppState::Running => {
+                self.render_joystick_monitor(area, buf);
+            }
+            _ => {}
+        }
+    }
+}
+
+impl App {
+    fn render_device_selection(&self, selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
+        use Constraint::{Length, Min, Percentage};
+
+        // Add horizontal padding - center the content with margins on left/right
+        let horizontal_layout = Layout::horizontal([
+            Percentage(20), // left margin
+            Percentage(60), // content area
+            Percentage(20), // right margin
+        ]);
+        let [_left_margin, content_area, _right_margin] = horizontal_layout.areas(area);
+
+        let layout = Layout::vertical([
+            Length(1), // top padding
+            Length(2), // header
+            Length(3), // search input
+            Min(5),    // device list
+            Length(1), // bottom padding
+            Length(2), // footer
+        ]);
+        let [
+            _top_padding,
+            header_area,
+            search_area,
+            list_area,
+            _bottom_padding,
+            footer_area,
+        ] = layout.areas(content_area);
+
+        // Header
+        Paragraph::new("Joystick Device Selection")
+            .bold()
+            .alignment(Alignment::Center)
+            .fg(LABEL_COLOR)
+            .render(header_area, buf);
+
+        // Search input
+        let search_text = format!(" {}_", selector.search_query);
+        Paragraph::new(search_text)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Search ")
+                    .title_alignment(Alignment::Center)
+                    .style(tailwind::BLUE.c300),
+            )
+            .fg(LABEL_COLOR)
+            .render(search_area, buf);
+
+        // Device list
+        let items: Vec<ListItem> = selector
+            .filtered_devices
+            .iter()
+            .map(|&device_index| {
+                let device = &selector.devices[device_index];
+                let content = format!("{} ({})", device.name, device.path);
+                ListItem::new(content)
+            })
+            .collect();
+
+        let list = List::new(items)
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Devices ")
+                    .title_alignment(Alignment::Center)
+                    .style(tailwind::BLUE.c300),
+            )
+            .style(LABEL_COLOR)
+            .highlight_style(Style::default().bg(tailwind::GRAY.c600))
+            .highlight_symbol("> ");
+
+        ratatui::widgets::StatefulWidget::render(
+            list,
+            list_area,
+            buf,
+            &mut selector.list_state.clone(),
+        );
+
+        // Footer
+        Paragraph::new(
+            "Use ↑↓/Ctrl+P/Ctrl+N to navigate, type to search, Enter to select, ESC to quit",
+        )
+        .alignment(Alignment::Center)
+        .fg(LABEL_COLOR)
+        .render(footer_area, buf);
+    }
+
+    fn render_joystick_monitor(&self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Ratio};
 
         let button_rows = if self.buttons.is_empty() {
             0
         } else {
             // Calculate rows needed for buttons (assuming 6 buttons per row)
-            (self.buttons.len() + 5) / 6
+            self.buttons.len().div_ceil(6)
         };
 
         let layout = Layout::vertical([
@@ -299,7 +590,7 @@ impl App {
             .block(title_block(title))
             .gauge_style(GAUGE_COLOR)
             .ratio(normalized)
-            .label(format!("{}", value))
+            .label(format!("{value}"))
             .render(area, buf);
     }
 
@@ -311,7 +602,7 @@ impl App {
         // Calculate button layout (6 buttons per row)
         let buttons_per_row = 6usize;
         let button_width = area.width / buttons_per_row as u16;
-        let rows = (self.buttons.len() + buttons_per_row - 1) / buttons_per_row;
+        let rows = self.buttons.len().div_ceil(buttons_per_row);
 
         for (i, button_info) in self.buttons.iter().enumerate() {
             let row = i / buttons_per_row;
@@ -341,14 +632,8 @@ impl App {
         let mut block = Block::default().borders(Borders::ALL);
 
         if is_pressed {
-            block = block.bg(tailwind::GREEN.c500);
+            block = block.bg(tailwind::RED.c400);
         }
-
-        let fg_color = if is_pressed {
-            tailwind::WHITE
-        } else {
-            LABEL_COLOR
-        };
 
         // Clean up button name (remove "KEY_" prefix if present)
         let clean_name = &button_info.name;
@@ -362,7 +647,7 @@ impl App {
         Paragraph::new(text)
             .block(block)
             .alignment(Alignment::Center)
-            .fg(fg_color)
+            .fg(LABEL_COLOR)
             .render(area, buf);
     }
 }
