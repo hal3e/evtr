@@ -2,7 +2,6 @@ mod devices;
 
 use std::{collections::HashMap, time::Duration};
 
-use color_eyre::Result;
 use evdev::{AbsoluteAxisCode, Device, EventType};
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
@@ -79,9 +78,7 @@ enum AppState {
     Quitting,
 }
 
-fn main() -> Result<()> {
-    color_eyre::install()?;
-
+fn main() -> Result<(), &'static str> {
     let terminal = ratatui::init();
     let result = run_app_loop(terminal);
     ratatui::restore();
@@ -89,16 +86,10 @@ fn main() -> Result<()> {
     result
 }
 
-fn run_app_loop(mut terminal: DefaultTerminal) -> Result<()> {
+fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
     loop {
         // Create app with device selection state
-        let device_selector = match DeviceSelector::new() {
-            Ok(selector) => selector,
-            Err(e) => {
-                eprintln!("Error discovering devices: {e}");
-                break;
-            }
-        };
+        let device_selector = DeviceSelector::new().ok_or("No joystick devices found!")?;
 
         let app = App {
             state: AppState::DeviceSelection,
@@ -110,26 +101,17 @@ fn run_app_loop(mut terminal: DefaultTerminal) -> Result<()> {
             device_selector: Some(device_selector),
         };
 
-        let app_result = app.run(&mut terminal);
-
-        match app_result {
-            Ok(should_continue) => {
-                if !should_continue {
-                    break;
-                }
-                // Continue loop to show device selection again
-            }
-            Err(e) => {
-                eprintln!("App error: {e}");
-                break;
-            }
+        let should_continue = app.run(&mut terminal)?;
+        if !should_continue {
+            break;
         }
+        // Continue loop to show device selection again
     }
 
     Ok(())
 }
 
-fn create_app_with_device(device: evdev::Device) -> Result<App> {
+fn create_app_with_device(device: evdev::Device) -> App {
     // Get all available axes from the device
     let mut axes = Vec::new();
     let mut initial_axis_values = HashMap::new();
@@ -180,7 +162,7 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
         }
     }
 
-    Ok(App {
+    App {
         state: AppState::Running,
         device: Some(device),
         axis_values: initial_axis_values,
@@ -188,11 +170,11 @@ fn create_app_with_device(device: evdev::Device) -> Result<App> {
         button_states: initial_button_states,
         buttons,
         device_selector: None,
-    })
+    }
 }
 
 impl DeviceSelector {
-    fn new() -> Result<Self> {
+    fn new() -> Option<Self> {
         let devices: Vec<DeviceInfo> = evdev::enumerate()
             .filter(|(_, device)| devices::is_joystick_device(device))
             .map(|(path, device)| {
@@ -207,14 +189,14 @@ impl DeviceSelector {
             .collect();
 
         if devices.is_empty() {
-            return Err(color_eyre::eyre::eyre!("No joystick devices found!"));
+            return None;
         }
 
         let filtered_devices = (0..devices.len()).collect();
         let mut list_state = ListState::default();
         list_state.select(Some(0));
 
-        Ok(Self {
+        Some(Self {
             devices,
             filtered_devices,
             selected_index: 0,
@@ -277,10 +259,12 @@ impl DeviceSelector {
 }
 
 impl App {
-    fn run(mut self, terminal: &mut DefaultTerminal) -> Result<bool> {
+    fn run(mut self, terminal: &mut DefaultTerminal) -> Result<bool, &'static str> {
         while self.state != AppState::Quitting && self.state != AppState::BackToSelection {
-            terminal.draw(|frame| frame.render_widget(&self, frame.area()))?;
             self.handle_events()?;
+            terminal
+                .draw(|frame| frame.render_widget(&self, frame.area()))
+                .map_err(|_| "Failed to draw terminal")?;
             self.update();
         }
 
@@ -314,10 +298,11 @@ impl App {
         }
     }
 
-    fn handle_events(&mut self) -> Result<()> {
-        let timeout = Duration::from_secs_f32(1.0 / 20.0);
-        if event::poll(timeout)? {
-            if let Event::Key(key) = event::read()? {
+    fn handle_events(&mut self) -> Result<(), &'static str> {
+        let timeout = Duration::from_millis(50);
+
+        if event::poll(timeout).map_err(|_| "Failed to poll events")? {
+            if let Event::Key(key) = event::read().map_err(|_| "Failed to read key event")? {
                 if key.kind == KeyEventKind::Press {
                     match self.state {
                         AppState::DeviceSelection => {
@@ -339,7 +324,7 @@ impl App {
         &mut self,
         key_code: KeyCode,
         modifiers: KeyModifiers,
-    ) -> Result<()> {
+    ) -> Result<(), &'static str> {
         if let Some(selector) = &mut self.device_selector {
             match key_code {
                 KeyCode::Esc => {
@@ -351,15 +336,14 @@ impl App {
                         let device_info = &selector.devices[device_index];
 
                         // Reopen the device to get an owned copy
-                        let device = Device::open(&device_info.path).map_err(|e| {
-                            color_eyre::eyre::eyre!("Failed to reopen device: {}", e)
-                        })?;
+                        let device = Device::open(&device_info.path)
+                            .map_err(|_| "Failed to reopen device")?;
 
-                        device.set_nonblocking(true).map_err(|e| {
-                            color_eyre::eyre::eyre!("Failed to set non-blocking mode: {}", e)
-                        })?;
+                        device
+                            .set_nonblocking(true)
+                            .map_err(|_| "Failed to set non-blocking mode")?;
 
-                        *self = create_app_with_device(device)?;
+                        *self = create_app_with_device(device);
                         self.state = AppState::Running;
                     }
                 }
@@ -448,8 +432,7 @@ impl App {
         let [_left_margin, content_area, _right_margin] = horizontal_layout.areas(area);
 
         let layout = Layout::vertical([
-            Length(1), // top padding
-            Length(2), // header
+            Length(2), // top padding
             Length(3), // search input
             Min(5),    // device list
             Length(1), // bottom padding
@@ -457,19 +440,11 @@ impl App {
         ]);
         let [
             _top_padding,
-            header_area,
             search_area,
             list_area,
             _bottom_padding,
             footer_area,
         ] = layout.areas(content_area);
-
-        // Header
-        Paragraph::new("Joystick Device Selection")
-            .bold()
-            .alignment(Alignment::Center)
-            .fg(LABEL_COLOR)
-            .render(header_area, buf);
 
         // Search input
         let search_text = format!(" {}_", selector.search_query);
