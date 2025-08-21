@@ -1,18 +1,22 @@
 mod devices;
 
-use std::{collections::HashMap, time::Duration};
+use std::collections::HashMap;
 
-use evdev::{AbsoluteAxisCode, Device, EventType};
+use crossterm::event::{
+    Event, EventStream as TermEventStream, KeyCode, KeyEventKind, KeyModifiers,
+};
+use evdev::{AbsoluteAxisCode, Device, EventStream, EventType};
+use futures::StreamExt;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
-    crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers},
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Color, Style, Stylize, palette::tailwind},
     text::Line,
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph, Widget},
 };
+use tokio::select;
 
 const GAUGE_COLOR: Color = tailwind::BLUE.c400;
 const LABEL_COLOR: Color = tailwind::SLATE.c200;
@@ -58,10 +62,10 @@ impl std::fmt::Debug for DeviceSelector {
     }
 }
 
-#[derive(Debug)]
 struct App {
     state: AppState,
     device: Option<Device>,
+    device_stream: Option<EventStream>,
     axis_values: HashMap<u16, i32>,
     axes: Vec<AxisInfo>,
     button_states: HashMap<u16, bool>,
@@ -78,15 +82,16 @@ enum AppState {
     Quitting,
 }
 
-fn main() -> Result<(), &'static str> {
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let terminal = ratatui::init();
-    let result = run_app_loop(terminal);
+    let result = run_app_loop(terminal).await;
     ratatui::restore();
 
-    result
+    result.map_err(|e| e.into())
 }
 
-fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
+async fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
     loop {
         // Create app with device selection state
         let device_selector = DeviceSelector::new().ok_or("No joystick devices found!")?;
@@ -94,6 +99,7 @@ fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
         let app = App {
             state: AppState::DeviceSelection,
             device: None,
+            device_stream: None,
             axis_values: HashMap::new(),
             axes: Vec::new(),
             button_states: HashMap::new(),
@@ -101,7 +107,7 @@ fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
             device_selector: Some(device_selector),
         };
 
-        let should_continue = app.run(&mut terminal)?;
+        let should_continue = app.run(&mut terminal).await?;
         if !should_continue {
             break;
         }
@@ -111,7 +117,7 @@ fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str> {
     Ok(())
 }
 
-fn create_app_with_device(device: evdev::Device) -> App {
+fn create_app_with_device(device: evdev::Device) -> Result<App, Box<dyn std::error::Error>> {
     // Get all available axes from the device
     let mut axes = Vec::new();
     let mut initial_axis_values = HashMap::new();
@@ -162,15 +168,19 @@ fn create_app_with_device(device: evdev::Device) -> App {
         }
     }
 
-    App {
+    // Create event stream from device
+    let device_stream = device.into_event_stream()?;
+
+    Ok(App {
         state: AppState::Running,
-        device: Some(device),
+        device: None, // Device is consumed by into_event_stream
+        device_stream: Some(device_stream),
         axis_values: initial_axis_values,
         axes,
         button_states: initial_button_states,
         buttons,
         device_selector: None,
-    }
+    })
 }
 
 impl DeviceSelector {
@@ -259,61 +269,67 @@ impl DeviceSelector {
 }
 
 impl App {
-    fn run(mut self, terminal: &mut DefaultTerminal) -> Result<bool, &'static str> {
+    async fn run(mut self, terminal: &mut DefaultTerminal) -> Result<bool, &'static str> {
+        let mut term_events = TermEventStream::new();
+
         while self.state != AppState::Quitting && self.state != AppState::BackToSelection {
-            self.handle_events()?;
+            // Draw the UI first
             terminal
                 .draw(|frame| frame.render_widget(&self, frame.area()))
                 .map_err(|_| "Failed to draw terminal")?;
-            self.update();
+
+            // Use select! to wait for either terminal or device events
+            if let Some(device_stream) = &mut self.device_stream {
+                select! {
+                    // Terminal events
+                    Some(Ok(event)) = term_events.next() => {
+                        self.handle_terminal_event(event)?;
+                    }
+                    // Device events
+                    Ok(ev) = device_stream.next_event() => {
+                        self.handle_device_event(ev);
+                    }
+                }
+            } else {
+                // No device selected, only handle terminal events
+                if let Some(Ok(event)) = term_events.next().await {
+                    self.handle_terminal_event(event)?;
+                }
+            }
         }
 
         // Return true if we should continue (back to selection), false if we should quit
         Ok(self.state == AppState::BackToSelection)
     }
 
-    fn update(&mut self) {
-        if self.state == AppState::Quitting {
-            return;
-        }
-
-        if let Some(ref mut device) = self.device {
-            if let Ok(events) = device.fetch_events() {
-                for event in events {
-                    match event.event_type() {
-                        EventType::ABSOLUTE => {
-                            let code = event.code();
-                            let value = event.value();
-                            self.axis_values.insert(code, value);
-                        }
-                        EventType::KEY => {
-                            let code = event.code();
-                            let pressed = event.value() != 0;
-                            self.button_states.insert(code, pressed);
-                        }
-                        _ => {}
-                    }
-                }
+    fn handle_device_event(&mut self, event: evdev::InputEvent) {
+        match event.event_type() {
+            EventType::ABSOLUTE => {
+                let code = event.code();
+                let value = event.value();
+                self.axis_values.insert(code, value);
             }
+            EventType::KEY => {
+                let code = event.code();
+                let pressed = event.value() != 0;
+                self.button_states.insert(code, pressed);
+            }
+            _ => {}
         }
     }
 
-    fn handle_events(&mut self) -> Result<(), &'static str> {
-        let timeout = Duration::from_millis(50);
-
-        if event::poll(timeout).map_err(|_| "Failed to poll events")? {
-            if let Event::Key(key) = event::read().map_err(|_| "Failed to read key event")? {
-                if key.kind == KeyEventKind::Press {
-                    match self.state {
-                        AppState::DeviceSelection => {
-                            self.handle_device_selection_input(key.code, key.modifiers)?;
-                        }
-                        AppState::Running => match key.code {
-                            KeyCode::Char('q') | KeyCode::Esc => self.quit(),
-                            _ => {}
-                        },
-                        _ => {}
+    fn handle_terminal_event(&mut self, event: Event) -> Result<(), &'static str> {
+        if let Event::Key(key) = event {
+            if key.kind == KeyEventKind::Press {
+                match self.state {
+                    AppState::DeviceSelection => {
+                        self.handle_device_selection_input(key.code, key.modifiers)?;
                     }
+                    AppState::Running => match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+                        _ => {}
+                    },
+                    _ => {}
                 }
             }
         }
@@ -335,16 +351,26 @@ impl App {
                         let device_index = selector.filtered_devices[selector.selected_index];
                         let device_info = &selector.devices[device_index];
 
-                        // Reopen the device to get an owned copy
-                        let device = Device::open(&device_info.path)
-                            .map_err(|_| "Failed to reopen device")?;
+                        // Open the device
+                        let device =
+                            Device::open(&device_info.path).map_err(|_| "Failed to open device")?;
 
-                        device
-                            .set_nonblocking(true)
-                            .map_err(|_| "Failed to set non-blocking mode")?;
-
-                        *self = create_app_with_device(device);
-                        self.state = AppState::Running;
+                        match create_app_with_device(device) {
+                            Ok(new_app) => {
+                                // Transfer ownership of the new app's fields to self
+                                self.state = AppState::Running;
+                                self.device = new_app.device;
+                                self.device_stream = new_app.device_stream;
+                                self.axis_values = new_app.axis_values;
+                                self.axes = new_app.axes;
+                                self.button_states = new_app.button_states;
+                                self.buttons = new_app.buttons;
+                                self.device_selector = None;
+                            }
+                            Err(_) => {
+                                return Err("Failed to initialize device");
+                            }
+                        }
                     }
                 }
                 KeyCode::Up => {
@@ -627,7 +653,7 @@ impl App {
     }
 }
 
-fn title_block(title: &str) -> Block {
+fn title_block(title: &str) -> Block<'_> {
     let title = Line::from(title).centered();
 
     Block::new()
@@ -635,3 +661,4 @@ fn title_block(title: &str) -> Block {
         .title(title)
         .fg(LABEL_COLOR)
 }
+
