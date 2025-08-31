@@ -5,7 +5,7 @@ use std::collections::HashMap;
 use crossterm::event::{
     Event, EventStream as TermEventStream, KeyCode, KeyEventKind, KeyModifiers,
 };
-use evdev::{AbsoluteAxisCode, Device, EventStream, EventType};
+use evdev::{AbsoluteAxisCode, Device, EventStream, EventType, RelativeAxisCode};
 use futures::StreamExt;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::{
@@ -31,6 +31,12 @@ struct AxisInfo {
 
 #[derive(Debug)]
 struct ButtonInfo {
+    code: u16,
+    name: String,
+}
+
+#[derive(Debug)]
+struct RelativeAxisInfo {
     code: u16,
     name: String,
 }
@@ -68,6 +74,8 @@ struct App {
     device_stream: Option<EventStream>,
     axis_values: HashMap<u16, i32>,
     axes: Vec<AxisInfo>,
+    relative_axis_values: HashMap<u16, i32>,
+    relative_axes: Vec<RelativeAxisInfo>,
     button_states: HashMap<u16, bool>,
     buttons: Vec<ButtonInfo>,
     device_selector: Option<DeviceSelector>,
@@ -102,6 +110,8 @@ async fn run_app_loop(mut terminal: DefaultTerminal) -> Result<(), &'static str>
             device_stream: None,
             axis_values: HashMap::new(),
             axes: Vec::new(),
+            relative_axis_values: HashMap::new(),
+            relative_axes: Vec::new(),
             button_states: HashMap::new(),
             buttons: Vec::new(),
             device_selector: Some(device_selector),
@@ -153,6 +163,19 @@ fn create_app_with_device(device: evdev::Device) -> Result<App, Box<dyn std::err
         }
     }
 
+    // Get all available relative axes from the device
+    let mut relative_axes = Vec::new();
+    let mut initial_relative_axis_values = HashMap::new();
+    if let Some(rel_axes) = device.supported_relative_axes() {
+        for axis_type in rel_axes.iter() {
+            let code = axis_type.0;
+            let name = format!("{:?}", RelativeAxisCode(code));
+
+            relative_axes.push(RelativeAxisInfo { code, name });
+            initial_relative_axis_values.insert(code, 0);
+        }
+    }
+
     // Get all available buttons from the device
     let mut buttons = Vec::new();
     let mut initial_button_states = HashMap::new();
@@ -177,6 +200,8 @@ fn create_app_with_device(device: evdev::Device) -> Result<App, Box<dyn std::err
         device_stream: Some(device_stream),
         axis_values: initial_axis_values,
         axes,
+        relative_axis_values: initial_relative_axis_values,
+        relative_axes,
         button_states: initial_button_states,
         buttons,
         device_selector: None,
@@ -309,6 +334,14 @@ impl App {
                 let value = event.value();
                 self.axis_values.insert(code, value);
             }
+            EventType::RELATIVE => {
+                let code = event.code();
+                let value = event.value();
+                // Accumulate relative values
+                let current = self.relative_axis_values.get(&code).copied().unwrap_or(0);
+                let new_value = current.saturating_add(value);
+                self.relative_axis_values.insert(code, new_value);
+            }
             EventType::KEY => {
                 let code = event.code();
                 let pressed = event.value() != 0;
@@ -327,6 +360,7 @@ impl App {
                     }
                     AppState::Running => match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => self.quit(),
+                        KeyCode::Char('r') => self.reset_relative_axes(),
                         _ => {}
                     },
                     _ => {}
@@ -363,6 +397,8 @@ impl App {
                                 self.device_stream = new_app.device_stream;
                                 self.axis_values = new_app.axis_values;
                                 self.axes = new_app.axes;
+                                self.relative_axis_values = new_app.relative_axis_values;
+                                self.relative_axes = new_app.relative_axes;
                                 self.button_states = new_app.button_states;
                                 self.buttons = new_app.buttons;
                                 self.device_selector = None;
@@ -406,6 +442,12 @@ impl App {
                 self.state = AppState::BackToSelection;
             }
             _ => {}
+        }
+    }
+
+    fn reset_relative_axes(&mut self) {
+        for value in self.relative_axis_values.values_mut() {
+            *value = 0;
         }
     }
 
@@ -534,18 +576,32 @@ impl App {
             self.buttons.len().div_ceil(6)
         };
 
+        // Calculate space needed for relative axes (3 lines per axis)
+        let relative_axes_height = if self.relative_axes.is_empty() {
+            0
+        } else {
+            self.relative_axes.len() as u16 * 3 + 1
+        };
+
         let layout = Layout::vertical([
             Length(2),                          // header
-            Length(self.axes.len() as u16 * 4), // gauges
+            Length(self.axes.len() as u16 * 4), // absolute axes gauges
+            Length(relative_axes_height),       // relative axes
             Length(button_rows as u16 * 3 + 2), // buttons + spacing
             Length(1),                          // footer
         ]);
-        let [header_area, gauge_area, button_area, footer_area] = layout.areas(area);
+        let [
+            header_area,
+            gauge_area,
+            relative_area,
+            button_area,
+            footer_area,
+        ] = layout.areas(area);
 
         render_header(header_area, buf);
         render_footer(footer_area, buf);
 
-        // Render gauges for axes
+        // Render gauges for absolute axes
         if !self.axes.is_empty() {
             let num_axes = self.axes.len();
             let constraints: Vec<Constraint> =
@@ -558,6 +614,11 @@ impl App {
                     self.render_gauge(axis_info.code, &axis_info.name, gauge_areas[i], buf);
                 }
             }
+        }
+
+        // Render relative axes
+        if !self.relative_axes.is_empty() {
+            self.render_relative_axes(relative_area, buf);
         }
 
         // Render buttons
@@ -576,7 +637,7 @@ fn render_header(area: Rect, buf: &mut Buffer) {
 }
 
 fn render_footer(area: Rect, buf: &mut Buffer) {
-    Paragraph::new("Press 'q' or ESC to quit")
+    Paragraph::new("Press 'q' or ESC to quit | 'r' to reset relative axes")
         .alignment(Alignment::Center)
         .fg(LABEL_COLOR)
         .bold()
@@ -593,6 +654,80 @@ impl App {
             .ratio(normalized)
             .label(format!("{value}"))
             .render(area, buf);
+    }
+
+    fn render_relative_axes(&self, area: Rect, buf: &mut Buffer) {
+        if area.height < 2 {
+            return;
+        }
+
+        // Title for relative axes section
+        let title_area = Rect::new(area.x, area.y, area.width, 1);
+        Paragraph::new("Relative Axes")
+            .style(Style::default().fg(LABEL_COLOR).bold())
+            .alignment(Alignment::Center)
+            .render(title_area, buf);
+
+        // Render each relative axis as a row with name and value
+        let content_area = Rect::new(
+            area.x,
+            area.y + 1,
+            area.width,
+            area.height.saturating_sub(1),
+        );
+
+        for (i, axis_info) in self.relative_axes.iter().enumerate() {
+            let y_offset = i as u16 * 3;
+            if y_offset + 2 >= content_area.height {
+                break; // No more space
+            }
+
+            let axis_area = Rect::new(
+                content_area.x + 2,
+                content_area.y + y_offset,
+                content_area.width.saturating_sub(4),
+                3,
+            );
+
+            let value = self
+                .relative_axis_values
+                .get(&axis_info.code)
+                .copied()
+                .unwrap_or(0);
+
+            // Rolling gauge implementation
+            // Use a fixed range for visualization
+            const DISPLAY_RANGE: i32 = 500; // -250 to +250
+            const HALF_RANGE: i32 = DISPLAY_RANGE / 2;
+
+            // Wrap the value within the display range
+            let wrapped_value = if value == 0 {
+                0
+            } else {
+                // Use modulo to wrap the value, keeping sign information
+                let wrapped = value % DISPLAY_RANGE;
+                if wrapped > HALF_RANGE {
+                    wrapped - DISPLAY_RANGE
+                } else if wrapped < -HALF_RANGE {
+                    wrapped + DISPLAY_RANGE
+                } else {
+                    wrapped
+                }
+            };
+
+            // Normalize wrapped value to 0.0-1.0 range for gauge
+            let normalized = ((wrapped_value + HALF_RANGE) as f64) / DISPLAY_RANGE as f64;
+
+            // Show axis name with actual value and a center marker
+            let label = format!("{}: {}", axis_info.name, value);
+
+            Gauge::default()
+                .block(Block::default().borders(Borders::ALL))
+                .gauge_style(GAUGE_COLOR)
+                .ratio(normalized.clamp(0.0, 1.0))
+                .label(label)
+                .render(axis_area, buf);
+        }
     }
 
     fn render_buttons(&self, area: Rect, buf: &mut Buffer) {
@@ -661,4 +796,3 @@ fn title_block(title: &str) -> Block<'_> {
         .title(title)
         .fg(LABEL_COLOR)
 }
-
