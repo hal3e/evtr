@@ -22,16 +22,15 @@ impl Evtr {
 
     async fn run_loop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         loop {
-            // Select a device
-            let device = DeviceSelector::select_device(&mut self.terminal).await?;
+            let Some(device) = DeviceSelector::run(&mut self.terminal).await? else {
+                break;
+            };
 
-            // Monitor the selected device
-            let should_continue = DeviceMonitor::monitor_device(&mut self.terminal, device).await?;
+            let should_continue = DeviceMonitor::run(&mut self.terminal, device).await?;
 
             if !should_continue {
-                break; // User wants to quit the application
+                break;
             }
-            // Otherwise loop back to device selection
         }
 
         Ok(())

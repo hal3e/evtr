@@ -124,7 +124,7 @@ impl DeviceMonitor {
         })
     }
 
-    pub async fn monitor_device(
+    pub async fn run(
         terminal: &mut DefaultTerminal,
         device: Device,
     ) -> Result<bool, Box<dyn std::error::Error>> {
@@ -141,8 +141,8 @@ impl DeviceMonitor {
             select! {
                 // Terminal events
                 Some(Ok(event)) = term_events.next() => {
-                    if let Event::Key(key) = event {
-                        if key.kind == KeyEventKind::Press {
+                    if let Event::Key(key) = event &&
+                         key.kind == KeyEventKind::Press {
                             match key.code {
                                 KeyCode::Char('q') | KeyCode::Esc => {
                                     return Ok(true); // Go back to device selection
@@ -152,7 +152,6 @@ impl DeviceMonitor {
                                 }
                                 _ => {}
                             }
-                        }
                     }
                 }
                 // Device events
