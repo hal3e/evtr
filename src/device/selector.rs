@@ -15,9 +15,9 @@ use ratatui::{
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
 
 #[derive(Debug)]
-struct DeviceInfo {
-    device: Device,
-    identifier: String,
+pub struct DeviceInfo {
+    pub device: Device,
+    pub identifier: String,
 }
 
 pub struct DeviceSelector {
@@ -59,7 +59,7 @@ impl DeviceSelector {
 
     pub async fn run(
         terminal: &mut DefaultTerminal,
-    ) -> Result<Option<Device>, Box<dyn std::error::Error>> {
+    ) -> Result<Option<DeviceInfo>, Box<dyn std::error::Error>> {
         let mut selector = Self::new()?;
         let mut term_events = TermEventStream::new();
 
@@ -76,8 +76,7 @@ impl DeviceSelector {
                         return Ok(selector
                             .devices
                             .into_iter()
-                            .nth(selector.filtered_indexes[selector.selected_filtered_index])
-                            .map(|DeviceInfo { device, .. }| device));
+                            .nth(selector.filtered_indexes[selector.selected_filtered_index]));
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(None);
@@ -161,15 +160,15 @@ impl DeviceSelector {
         const LAYOUT_MARGIN: u16 = 20;
         const LAYOUT_CONTENT_WIDTH: u16 = 60;
 
-        let horizontal_layout = Layout::horizontal([
+        let [_left_margin, content_area, _right_margin] = Layout::horizontal([
             Percentage(LAYOUT_MARGIN),
             Percentage(LAYOUT_CONTENT_WIDTH),
             Percentage(LAYOUT_MARGIN),
-        ]);
-        let [_left_margin, content_area, _right_margin] = horizontal_layout.areas(area);
+        ])
+        .areas(area);
 
-        let layout = Layout::vertical([Length(1), Length(3), Min(3)]);
-        let [_top_padding, search_area, list_area] = layout.areas(content_area);
+        let [_top_padding, search_area, list_area] =
+            Layout::vertical([Length(1), Length(3), Min(3)]).areas(content_area);
 
         self.render_search_box(search_area, buf);
         self.render_device_list(list_area, buf);
