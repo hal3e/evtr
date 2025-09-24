@@ -30,7 +30,7 @@ pub struct DeviceSelector {
 
 impl DeviceSelector {
     fn new() -> Result<Self, Box<dyn std::error::Error>> {
-        let devices: Vec<DeviceInfo> = evdev::enumerate()
+        let mut devices: Vec<DeviceInfo> = evdev::enumerate()
             .map(|(path, device)| {
                 let name = device.name().unwrap_or("Unknown Device").to_string();
                 let path = path.to_string_lossy().to_string();
@@ -41,6 +41,12 @@ impl DeviceSelector {
                 }
             })
             .collect();
+
+        devices.sort_unstable_by(|a, b| {
+            a.identifier
+                .to_lowercase()
+                .cmp(&b.identifier.to_lowercase())
+        });
 
         if devices.is_empty() {
             return Err("no input devices found!".into());
@@ -167,11 +173,15 @@ impl DeviceSelector {
         ])
         .areas(area);
 
-        let [_top_padding, search_area, list_area] =
+        // Keep existing top padding and search box, add a one-line footer below the list
+        let [_top_padding, search_area, main_area] =
             Layout::vertical([Length(1), Length(3), Min(3)]).areas(content_area);
+
+        let [list_area, footer_area] = Layout::vertical([Min(1), Length(1)]).areas(main_area);
 
         self.render_search_box(search_area, buf);
         self.render_device_list(list_area, buf);
+        self.render_footer(footer_area, buf);
     }
 
     fn render_search_box(&self, area: Rect, buf: &mut Buffer) {
@@ -214,5 +224,23 @@ impl DeviceSelector {
         });
 
         ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
+    }
+
+    fn render_footer(&self, area: Rect, buf: &mut Buffer) {
+        if area.height == 0 {
+            return;
+        }
+
+        let total = self.devices.len();
+        let filtered = self.filtered_indexes.len();
+        let footer_text = format!(
+            "'Enter': select | Ctrl-C: quit | ↑/↓ or Ctrl-P/N: navigate | Matches: {}/{}",
+            filtered, total
+        );
+
+        Paragraph::new(footer_text)
+            .style(Style::new().fg(tailwind::SLATE.c200).bold())
+            .alignment(Alignment::Center)
+            .render(area, buf);
     }
 }
