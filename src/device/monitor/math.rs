@@ -23,4 +23,3 @@ pub fn normalize_wrapped(value: i32, range: i32) -> f64 {
     let wrapped = wrapped_value(value, range);
     ((wrapped + half_range) as f64 / range as f64).clamp(0.0, 1.0)
 }
-

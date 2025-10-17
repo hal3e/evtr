@@ -5,7 +5,11 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::device::monitor::{config, ui, model::{DeviceInput, InputSlice, InputKind}};
+use crate::device::monitor::{
+    config,
+    model::{DeviceInput, InputKind, InputSlice},
+    ui,
+};
 
 pub(crate) struct ButtonGrid;
 

@@ -11,14 +11,13 @@ use crossterm::event::{
     Event, EventStream as TermEventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use futures::StreamExt;
-use tokio::select;
-
 use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
     widgets::{Paragraph, Widget},
 };
+use tokio::select;
 
 use self::{
     controls::Command,
@@ -97,12 +96,7 @@ impl ScrollState {
         self.scroll_step(counts, axes_max_start, buttons_max_start, -1);
     }
 
-    fn scroll_down(
-        &mut self,
-        counts: &Counts,
-        axes_max_start: usize,
-        buttons_max_start: usize,
-    ) {
+    fn scroll_down(&mut self, counts: &Counts, axes_max_start: usize, buttons_max_start: usize) {
         self.scroll_step(counts, axes_max_start, buttons_max_start, 1);
     }
 
@@ -302,7 +296,11 @@ impl DeviceMonitor {
         let effective_rel = if rel_visible { counts.rel } else { 0 };
         // If the button area is not present in the current layout, do not
         // include buttons in effective scrollable content.
-        let effective_btn = if sizer.btn_area.is_some() { counts.btn } else { 0 };
+        let effective_btn = if sizer.btn_area.is_some() {
+            counts.btn
+        } else {
+            0
+        };
         self.effective_counts = Counts {
             abs: effective_abs,
             rel: effective_rel,
@@ -366,8 +364,11 @@ impl DeviceMonitor {
         if !self.has_overflow() {
             return;
         }
-        self.scroll
-            .scroll_up(&self.effective_counts, self.axes_max_start, self.buttons_max_start);
+        self.scroll.scroll_up(
+            &self.effective_counts,
+            self.axes_max_start,
+            self.buttons_max_start,
+        );
     }
 
     fn scroll_down(&mut self) {
@@ -443,8 +444,12 @@ impl DeviceMonitor {
 
     fn footer_prefix(has_relative: bool, overflow: bool) -> &'static str {
         match (overflow, has_relative) {
-            (true, true) => "Ctrl-C: back | 'r': reset | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |",
-            (true, false) => "Ctrl-C: back | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |",
+            (true, true) => {
+                "Ctrl-C: back | 'r': reset | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |"
+            }
+            (true, false) => {
+                "Ctrl-C: back | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |"
+            }
             (false, true) => "Ctrl-C: back | 'r': reset relative axes",
             (false, false) => "Ctrl-C: back",
         }
@@ -481,7 +486,9 @@ impl DeviceMonitor {
         if btn_area.height <= config::BTN_SECTION_VERT_PADDING {
             return 0;
         }
-        let usable_h = btn_area.height.saturating_sub(config::BTN_SECTION_VERT_PADDING);
+        let usable_h = btn_area
+            .height
+            .saturating_sub(config::BTN_SECTION_VERT_PADDING);
         let max_rows = (usable_h / config::BUTTON_HEIGHT) as usize;
         (max_rows * config::BUTTONS_PER_ROW).min(self.effective_counts.btn)
     }

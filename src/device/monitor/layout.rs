@@ -1,7 +1,6 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 
-use crate::device::monitor::config;
-use crate::device::monitor::render::axis::AxisRenderer;
+use crate::device::monitor::{config, render::axis::AxisRenderer};
 
 pub(crate) fn main_layout(area: Rect) -> [Rect; 3] {
     Layout::vertical([

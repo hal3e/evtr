@@ -1,5 +1,4 @@
-use ratatui::style::palette::tailwind;
-use ratatui::style::{Color, Style, Stylize};
+use ratatui::style::{Color, Style, Stylize, palette::tailwind};
 
 pub fn style_label() -> Style {
     Style::new().fg(tailwind::SLATE.c200)
