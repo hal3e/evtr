@@ -9,6 +9,27 @@ use crate::device::monitor::{config, ui, model::{DeviceInput, InputSlice}};
 pub(crate) struct AxisRenderer;
 
 impl AxisRenderer {
+    pub(crate) fn bar_height_for(available_height: u16, num_items: usize) -> u16 {
+        if num_items == 0 {
+            return 1;
+        }
+        for &height in &config::BAR_HEIGHTS {
+            let total_needed = (height + config::AXIS_GAP) * num_items as u16;
+            if total_needed <= available_height {
+                return height;
+            }
+        }
+        1
+    }
+
+    pub(crate) fn capacity_for(area: Rect, count: usize) -> usize {
+        if count == 0 || area.height == 0 || area.width < config::AXIS_MIN_WIDTH {
+            return 0;
+        }
+        let bar_height = Self::bar_height_for(area.height, count);
+        let item_height = bar_height + config::AXIS_GAP;
+        ((area.height / item_height) as usize).min(count)
+    }
     fn split_label_gauge(area: Rect) -> (Rect, Rect) {
         let label_width = config::AXIS_LABEL_MAX.min(area.width / 3);
         let gauge_width = area
@@ -41,7 +62,7 @@ impl AxisRenderer {
         }
 
         let num_items = inputs.len();
-        let bar_height = Self::calculate_bar_height(area.height, num_items);
+        let bar_height = Self::bar_height_for(area.height, num_items);
         let item_height = bar_height + config::AXIS_GAP;
 
         let max_visible = (area.height / item_height) as usize;
@@ -55,21 +76,6 @@ impl AxisRenderer {
             let item_area = Rect::new(area.x, y, area.width, bar_height);
             Self::render_axis_item(input, item_area, buf);
         }
-    }
-
-    fn calculate_bar_height(available_height: u16, num_items: usize) -> u16 {
-        if num_items == 0 {
-            return 1;
-        }
-
-        for height in &config::BAR_HEIGHTS {
-            let total_needed = (height + config::AXIS_GAP) * num_items as u16;
-            if total_needed <= available_height {
-                return *height;
-            }
-        }
-
-        1
     }
 
     fn render_axis_item(input: &DeviceInput, area: Rect, buf: &mut Buffer) {

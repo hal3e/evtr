@@ -87,6 +87,13 @@ impl DeviceSelector {
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(None);
                     }
+                    KeyCode::Esc => {
+                        if selector.search_query.is_empty() {
+                            return Ok(None);
+                        } else {
+                            selector.clear_search();
+                        }
+                    }
                     KeyCode::Up => {
                         selector.navigate_up();
                     }
@@ -99,8 +106,19 @@ impl DeviceSelector {
                     KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         selector.navigate_down();
                     }
+                    KeyCode::PageUp => {
+                        selector.navigate_page(-1);
+                    }
+                    KeyCode::PageDown => {
+                        selector.navigate_page(1);
+                    }
+                    KeyCode::Home => selector.select_home(),
+                    KeyCode::End => selector.select_end(),
                     KeyCode::Backspace => {
                         selector.remove_char();
+                    }
+                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        selector.clear_search();
                     }
                     KeyCode::Char(c)
                         if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
@@ -132,7 +150,6 @@ impl DeviceSelector {
             scored_devices.sort_unstable_by(|a, b| b.1.cmp(&a.1));
             self.filtered_indexes = scored_devices.into_iter().map(|(i, _)| i).collect();
         }
-
         self.selected_filtered_index = 0;
     }
 
@@ -150,6 +167,32 @@ impl DeviceSelector {
         }
     }
 
+    fn navigate_page(&mut self, dir: i32) {
+        if self.filtered_indexes.is_empty() {
+            return;
+        }
+        const PAGE: usize = 10;
+        let len = self.filtered_indexes.len();
+        if dir < 0 {
+            self.selected_filtered_index = self.selected_filtered_index.saturating_sub(PAGE);
+        } else if dir > 0 {
+            let target = self.selected_filtered_index.saturating_add(PAGE);
+            self.selected_filtered_index = target.min(len - 1);
+        }
+    }
+
+    fn select_home(&mut self) {
+        if !self.filtered_indexes.is_empty() {
+            self.selected_filtered_index = 0;
+        }
+    }
+
+    fn select_end(&mut self) {
+        if !self.filtered_indexes.is_empty() {
+            self.selected_filtered_index = self.filtered_indexes.len() - 1;
+        }
+    }
+
     fn add_char(&mut self, c: char) {
         self.search_query.push(c);
         self.update_filter();
@@ -157,6 +200,11 @@ impl DeviceSelector {
 
     fn remove_char(&mut self) {
         self.search_query.pop();
+        self.update_filter();
+    }
+
+    fn clear_search(&mut self) {
+        self.search_query.clear();
         self.update_filter();
     }
 
@@ -234,7 +282,7 @@ impl DeviceSelector {
         let total = self.devices.len();
         let filtered = self.filtered_indexes.len();
         let footer_text = format!(
-            "'Enter': select | Ctrl-C: quit | ↑/↓ or Ctrl-P/N: navigate | Matches: {}/{}",
+            "Enter: select | Esc: clear/exit | Ctrl-C: quit | ↑/↓/PgUp/PgDn/Home/End: navigate | Ctrl-U: clear | Matches: {}/{}",
             filtered, total
         );
 

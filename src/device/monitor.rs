@@ -389,6 +389,8 @@ impl DeviceMonitor {
                 Command::Quit
             }
             KeyCode::Char('r') => Command::Reset,
+            KeyCode::Char('g') => Command::Home,
+            KeyCode::Char('G') => Command::End,
             KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
             KeyCode::PageUp => Command::Page(-1),
@@ -441,8 +443,8 @@ impl DeviceMonitor {
 
     fn footer_prefix(has_relative: bool, overflow: bool) -> &'static str {
         match (overflow, has_relative) {
-            (true, true) => "Ctrl-C: back | 'r': reset | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End: jump |",
-            (true, false) => "Ctrl-C: back | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End: jump |",
+            (true, true) => "Ctrl-C: back | 'r': reset | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |",
+            (true, false) => "Ctrl-C: back | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |",
             (false, true) => "Ctrl-C: back | 'r': reset relative axes",
             (false, false) => "Ctrl-C: back",
         }
@@ -460,39 +462,16 @@ impl DeviceMonitor {
     }
 
     fn axes_visible_capacity(&self, sizer: &SectionSizer) -> usize {
-        let abs_cap = Self::max_visible_in_area(sizer.abs_area, self.effective_counts.abs);
-        let rel_cap = Self::max_visible_in_area(sizer.rel_area, self.effective_counts.rel);
+        use crate::device::monitor::render::axis::AxisRenderer as AX;
+        let abs_cap = sizer
+            .abs_area
+            .map(|a| AX::capacity_for(a, self.effective_counts.abs))
+            .unwrap_or(0);
+        let rel_cap = sizer
+            .rel_area
+            .map(|a| AX::capacity_for(a, self.effective_counts.rel))
+            .unwrap_or(0);
         abs_cap + rel_cap
-    }
-
-    fn max_visible_in_area(area: Option<Rect>, count: usize) -> usize {
-        if count == 0 {
-            return 0;
-        }
-        if let Some(a) = area {
-            if a.height == 0 || a.width < config::AXIS_MIN_WIDTH {
-                return 0;
-            }
-            let bar_height = Self::choose_bar_height(a.height, count);
-            let item_height = bar_height + config::AXIS_GAP;
-            let capacity = (a.height / item_height) as usize;
-            capacity.min(count)
-        } else {
-            0
-        }
-    }
-
-    fn choose_bar_height(available_height: u16, num_items: usize) -> u16 {
-        if num_items == 0 {
-            return 1;
-        }
-        for &height in &config::BAR_HEIGHTS {
-            let total_needed = (height + config::AXIS_GAP) * num_items as u16;
-            if total_needed <= available_height {
-                return height;
-            }
-        }
-        1
     }
 
     fn buttons_visible_capacity(&self, btn_area: Rect) -> usize {

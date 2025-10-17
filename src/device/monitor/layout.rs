@@ -1,6 +1,7 @@
 use ratatui::layout::{Constraint, Layout, Rect};
 
 use crate::device::monitor::config;
+use crate::device::monitor::render::axis::AxisRenderer;
 
 pub(crate) fn main_layout(area: Rect) -> [Rect; 3] {
     Layout::vertical([
@@ -122,14 +123,11 @@ fn optimal_axes_height(
     } else {
         0
     };
-    for &bar_height in &config::BAR_HEIGHTS {
-        let total_needed = (total_axes as u16 * (bar_height + config::AXIS_GAP)) + rel_gap;
-        if total_needed <= available_height {
-            return total_needed;
-        }
-    }
 
-    min_height.min(available_height)
+    let avail_for_bars = available_height.saturating_sub(rel_gap);
+    let bar_h = AxisRenderer::bar_height_for(avail_for_bars, total_axes);
+    let total_needed = (total_axes as u16 * (bar_h + config::AXIS_GAP)) + rel_gap;
+    total_needed.min(available_height)
 }
 
 pub(crate) fn section_min_heights(
