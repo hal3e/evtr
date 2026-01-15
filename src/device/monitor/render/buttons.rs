@@ -50,9 +50,12 @@ impl ButtonGrid {
 
         for i in 0..count {
             let idx = start + i;
+            let Some(button) = buttons.get(idx) else {
+                break;
+            };
             let (row, col) = Self::grid_position(i);
             let button_area = Self::calculate_button_area(area, row, col, metrics.button_width);
-            Self::render_button(button_area, buttons[idx], buf);
+            Self::render_button(button_area, button, buf);
         }
     }
 

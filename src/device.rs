@@ -1,29 +1,30 @@
 mod monitor;
 mod selector;
 
-pub use monitor::*;
+use crate::error::Result;
+pub use monitor::DeviceMonitor;
 use ratatui::DefaultTerminal;
-pub use selector::*;
+pub use selector::{DeviceInfo, DeviceSelector};
 
 pub struct Evtr {
     terminal: DefaultTerminal,
 }
 
 impl Evtr {
-    pub fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    pub fn new() -> Result<Self> {
         let terminal = ratatui::init();
 
         Ok(Self { terminal })
     }
 
-    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(mut self) -> Result<()> {
         let result = self.run_loop().await;
         ratatui::restore();
 
         result
     }
 
-    async fn run_loop(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    async fn run_loop(&mut self) -> Result<()> {
         loop {
             let Some(device) = DeviceSelector::run(&mut self.terminal).await? else {
                 break;

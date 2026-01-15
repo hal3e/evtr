@@ -71,14 +71,16 @@ impl AxisRenderer {
 
         let max_visible = (area.height / item_height) as usize;
         let (start, count) = ui::visible_window(num_items, scroll_offset, max_visible);
-        for (i, input) in inputs[start..start + count].iter().enumerate() {
-            let y = area.y + (i as u16 * item_height);
-            if y + bar_height > area.y + area.height {
-                break;
-            }
+        if let Some(window) = inputs.get(start..start + count) {
+            for (i, input) in window.iter().enumerate() {
+                let y = area.y + (i as u16 * item_height);
+                if y + bar_height > area.y + area.height {
+                    break;
+                }
 
-            let item_area = Rect::new(area.x, y, area.width, bar_height);
-            Self::render_axis_item(input, item_area, buf);
+                let item_area = Rect::new(area.x, y, area.width, bar_height);
+                Self::render_axis_item(input, item_area, buf);
+            }
         }
     }
 

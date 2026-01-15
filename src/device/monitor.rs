@@ -19,6 +19,8 @@ use ratatui::{
 };
 use tokio::select;
 
+use crate::error::{Error, Result};
+
 use self::{
     controls::Command,
     layout::{SectionSizer, main_layout},
@@ -199,11 +201,11 @@ impl ScrollState {
 }
 
 impl DeviceMonitor {
-    fn new(
-        DeviceInfo { device, identifier }: DeviceInfo,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let inputs = InputCollection::from_device(&device);
-        let device_stream = device.into_event_stream()?;
+        let device_stream = device
+            .into_event_stream()
+            .map_err(|err| Error::evdev(format!("open device stream ({identifier})"), err))?;
         let counts = Counts {
             abs: inputs.iter_absolute().count(),
             rel: inputs.iter_relative().count(),
@@ -222,20 +224,19 @@ impl DeviceMonitor {
         })
     }
 
-    pub async fn run(
-        terminal: &mut DefaultTerminal,
-        device_info: DeviceInfo,
-    ) -> Result<bool, Box<dyn std::error::Error>> {
+    pub async fn run(terminal: &mut DefaultTerminal, device_info: DeviceInfo) -> Result<bool> {
         let mut monitor = Self::new(device_info)?;
         let mut term_events = TermEventStream::new();
 
         loop {
-            terminal.draw(|frame| monitor.render(frame.area(), frame.buffer_mut()))?;
+            terminal
+                .draw(|frame| monitor.render(frame.area(), frame.buffer_mut()))
+                .map_err(|err| Error::io("monitor draw", err))?;
 
             select! {
                 event = term_events.next() => {
-                    if let Some(Ok(Event::Key(key))) = event {
-                        if key.kind == KeyEventKind::Press {
+                    match event {
+                        Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
                             match monitor.handle_event(key) {
                                 Command::Quit => return Ok(true),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
@@ -253,9 +254,15 @@ impl DeviceMonitor {
                                 Command::None => {}
                             }
                         }
-                    } else if let Some(Err(e)) = event { return Err(Box::new(e)); }
+                        Some(Ok(_)) => {}
+                        Some(Err(err)) => return Err(Error::terminal("terminal event stream", err)),
+                        None => return Err(Error::stream_ended("terminal event stream")),
+                    }
                 }
-                event = monitor.device_stream.next_event() => { monitor.inputs.handle_event(&event?); }
+                event = monitor.device_stream.next_event() => {
+                    let event = event.map_err(|err| Error::evdev("device event stream", err))?;
+                    monitor.inputs.handle_event(&event);
+                }
             }
         }
     }

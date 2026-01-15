@@ -12,6 +12,8 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget},
 };
 
+use crate::error::{Error, Result};
+
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
 
 #[derive(Debug)]
@@ -29,7 +31,7 @@ pub struct DeviceSelector {
 }
 
 impl DeviceSelector {
-    fn new() -> Result<Self, Box<dyn std::error::Error>> {
+    fn new() -> Result<Self> {
         let mut devices: Vec<DeviceInfo> = evdev::enumerate()
             .map(|(path, device)| {
                 let name = device.name().unwrap_or("Unknown Device").to_string();
@@ -49,7 +51,7 @@ impl DeviceSelector {
         });
 
         if devices.is_empty() {
-            return Err("no input devices found!".into());
+            return Err(Error::NoDevicesFound);
         }
 
         let filtered_indexes = (0..devices.len()).collect();
@@ -63,26 +65,26 @@ impl DeviceSelector {
         })
     }
 
-    pub async fn run(
-        terminal: &mut DefaultTerminal,
-    ) -> Result<Option<DeviceInfo>, Box<dyn std::error::Error>> {
+    pub async fn run(terminal: &mut DefaultTerminal) -> Result<Option<DeviceInfo>> {
         let mut selector = Self::new()?;
         let mut term_events = TermEventStream::new();
 
         loop {
-            terminal.draw(|frame| {
-                selector.render(frame.area(), frame.buffer_mut());
-            })?;
+            terminal
+                .draw(|frame| {
+                    selector.render(frame.area(), frame.buffer_mut());
+                })
+                .map_err(|err| Error::io("selector draw", err))?;
 
-            if let Some(Ok(Event::Key(key))) = term_events.next().await
-                && key.kind == KeyEventKind::Press
-            {
-                match key.code {
+            match term_events.next().await {
+                Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => match key.code {
                     KeyCode::Enter if !selector.filtered_indexes.is_empty() => {
-                        return Ok(selector
-                            .devices
-                            .into_iter()
-                            .nth(selector.filtered_indexes[selector.selected_filtered_index]));
+                        if let Some(&index) = selector
+                            .filtered_indexes
+                            .get(selector.selected_filtered_index)
+                        {
+                            return Ok(Some(selector.devices.swap_remove(index)));
+                        }
                     }
                     KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                         return Ok(None);
@@ -126,7 +128,10 @@ impl DeviceSelector {
                         selector.add_char(c);
                     }
                     _ => {}
-                }
+                },
+                Some(Ok(_)) => {}
+                Some(Err(err)) => return Err(Error::terminal("terminal event stream", err)),
+                None => return Err(Error::stream_ended("terminal event stream")),
             }
         }
     }

@@ -1,6 +1,9 @@
 mod device;
+mod error;
+
+use crate::error::Result;
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<()> {
     device::Evtr::new()?.run().await
 }
