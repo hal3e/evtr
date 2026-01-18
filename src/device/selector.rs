@@ -15,6 +15,18 @@ use ratatui::{
 use crate::error::{Error, Result};
 
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
+const PAGE_SCROLL_SIZE: usize = 10;
+const LAYOUT_MARGIN_PCT: u16 = 20;
+const LAYOUT_CONTENT_WIDTH_PCT: u16 = 60;
+const TOP_PADDING_HEIGHT: u16 = 1;
+const SEARCH_BOX_HEIGHT: u16 = 3;
+const MAIN_MIN_HEIGHT: u16 = 3;
+const LIST_MIN_HEIGHT: u16 = 1;
+const FOOTER_HEIGHT: u16 = 1;
+const POPUP_MIN_WIDTH: u16 = 10;
+const POPUP_MIN_HEIGHT: u16 = 3;
+const POPUP_MAX_WIDTH: u16 = 80;
+const POPUP_MAX_HEIGHT: u16 = 5;
 
 #[derive(Debug)]
 pub struct DeviceInfo {
@@ -33,6 +45,21 @@ pub struct DeviceSelector {
 
 impl DeviceSelector {
     fn new(error_message: Option<String>) -> Result<Self> {
+        let devices = Self::load_devices()?;
+
+        let filtered_indexes = (0..devices.len()).collect();
+
+        Ok(Self {
+            devices,
+            filtered_indexes,
+            selected_filtered_index: 0,
+            search_query: String::new(),
+            matcher: SkimMatcherV2::default(),
+            error_message,
+        })
+    }
+
+    fn load_devices() -> Result<Vec<DeviceInfo>> {
         let mut devices: Vec<DeviceInfo> = evdev::enumerate()
             .map(|(path, device)| {
                 let name = device.name().unwrap_or("Unknown Device").to_string();
@@ -55,16 +82,13 @@ impl DeviceSelector {
             return Err(Error::NoDevicesFound);
         }
 
-        let filtered_indexes = (0..devices.len()).collect();
+        Ok(devices)
+    }
 
-        Ok(Self {
-            devices,
-            filtered_indexes,
-            selected_filtered_index: 0,
-            search_query: String::new(),
-            matcher: SkimMatcherV2::default(),
-            error_message,
-        })
+    fn refresh_devices(&mut self) -> Result<()> {
+        self.devices = Self::load_devices()?;
+        self.update_filter();
+        Ok(())
     }
 
     pub async fn run(
@@ -131,6 +155,11 @@ impl DeviceSelector {
                         KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             selector.clear_search();
                         }
+                        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            if let Err(err) = selector.refresh_devices() {
+                                selector.error_message = Some(err.to_string());
+                            }
+                        }
                         KeyCode::Char(c)
                             if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
                         {
@@ -186,12 +215,15 @@ impl DeviceSelector {
         if self.filtered_indexes.is_empty() {
             return;
         }
-        const PAGE: usize = 10;
         let len = self.filtered_indexes.len();
         if dir < 0 {
-            self.selected_filtered_index = self.selected_filtered_index.saturating_sub(PAGE);
+            self.selected_filtered_index = self
+                .selected_filtered_index
+                .saturating_sub(PAGE_SCROLL_SIZE);
         } else if dir > 0 {
-            let target = self.selected_filtered_index.saturating_add(PAGE);
+            let target = self
+                .selected_filtered_index
+                .saturating_add(PAGE_SCROLL_SIZE);
             self.selected_filtered_index = target.min(len - 1);
         }
     }
@@ -226,21 +258,23 @@ impl DeviceSelector {
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min, Percentage};
 
-        const LAYOUT_MARGIN: u16 = 20;
-        const LAYOUT_CONTENT_WIDTH: u16 = 60;
-
         let [_left_margin, content_area, _right_margin] = Layout::horizontal([
-            Percentage(LAYOUT_MARGIN),
-            Percentage(LAYOUT_CONTENT_WIDTH),
-            Percentage(LAYOUT_MARGIN),
+            Percentage(LAYOUT_MARGIN_PCT),
+            Percentage(LAYOUT_CONTENT_WIDTH_PCT),
+            Percentage(LAYOUT_MARGIN_PCT),
         ])
         .areas(area);
 
         // Keep existing top padding and search box, add a one-line footer below the list
-        let [_top_padding, search_area, main_area] =
-            Layout::vertical([Length(1), Length(3), Min(3)]).areas(content_area);
+        let [_top_padding, search_area, main_area] = Layout::vertical([
+            Length(TOP_PADDING_HEIGHT),
+            Length(SEARCH_BOX_HEIGHT),
+            Min(MAIN_MIN_HEIGHT),
+        ])
+        .areas(content_area);
 
-        let [list_area, footer_area] = Layout::vertical([Min(1), Length(1)]).areas(main_area);
+        let [list_area, footer_area] =
+            Layout::vertical([Min(LIST_MIN_HEIGHT), Length(FOOTER_HEIGHT)]).areas(main_area);
 
         self.render_search_box(search_area, buf);
         self.render_device_list(list_area, buf);
@@ -298,7 +332,7 @@ impl DeviceSelector {
         let total = self.devices.len();
         let filtered = self.filtered_indexes.len();
         let footer_text = format!(
-            "Enter: select | Esc: clear/exit | Ctrl-C: quit | ↑/↓/PgUp/PgDn/Home/End: navigate | Ctrl-U: clear | Matches: {}/{}",
+            "Enter: select | Esc: clear/exit | Ctrl-C: quit | ↑/↓/PgUp/PgDn/Home/End: navigate | Ctrl-U: clear | Ctrl-R: refresh | Matches: {}/{}",
             filtered, total
         );
         Paragraph::new(footer_text)
@@ -312,12 +346,12 @@ impl DeviceSelector {
             return;
         };
 
-        if area.width < 10 || area.height < 3 {
+        if area.width < POPUP_MIN_WIDTH || area.height < POPUP_MIN_HEIGHT {
             return;
         }
 
-        let width = area.width.min(80);
-        let height = area.height.min(5).max(3);
+        let width = area.width.min(POPUP_MAX_WIDTH);
+        let height = area.height.clamp(POPUP_MIN_HEIGHT, POPUP_MAX_HEIGHT);
         let x = area.x + (area.width.saturating_sub(width)) / 2;
         let y = area.y + (area.height.saturating_sub(height)) / 2;
         let popup_area = Rect::new(x, y, width, height);
