@@ -224,7 +224,7 @@ impl DeviceMonitor {
         })
     }
 
-    pub async fn run(terminal: &mut DefaultTerminal, device_info: DeviceInfo) -> Result<bool> {
+    pub async fn run(terminal: &mut DefaultTerminal, device_info: DeviceInfo) -> Result<()> {
         let mut monitor = Self::new(device_info)?;
         let mut term_events = TermEventStream::new();
 
@@ -238,7 +238,7 @@ impl DeviceMonitor {
                     match event {
                         Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
                             match monitor.handle_event(key) {
-                                Command::Quit => return Ok(true),
+                                Command::Quit => return Ok(()),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
                                 Command::Scroll(dir) => monitor.scroll_by(dir),
                                 Command::Page(dir) => {
@@ -260,7 +260,12 @@ impl DeviceMonitor {
                     }
                 }
                 event = monitor.device_stream.next_event() => {
-                    let event = event.map_err(|err| Error::evdev("device event stream", err))?;
+                    let event = event.map_err(|err| {
+                        Error::evdev(
+                            format!("device event stream ({})", monitor.identifier),
+                            err,
+                        )
+                    })?;
                     monitor.inputs.handle_event(&event);
                 }
             }

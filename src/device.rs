@@ -25,15 +25,16 @@ impl Evtr {
     }
 
     async fn run_loop(&mut self) -> Result<()> {
+        let mut error_message: Option<String> = None;
         loop {
-            let Some(device) = DeviceSelector::run(&mut self.terminal).await? else {
+            let Some(device) =
+                DeviceSelector::run(&mut self.terminal, error_message.take()).await?
+            else {
                 break;
             };
 
-            let should_continue = DeviceMonitor::run(&mut self.terminal, device).await?;
-
-            if !should_continue {
-                break;
+            if let Err(err) = DeviceMonitor::run(&mut self.terminal, device).await {
+                error_message = Some(err.to_string());
             }
         }
 

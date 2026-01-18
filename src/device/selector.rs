@@ -9,7 +9,7 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Style, Stylize, palette::tailwind},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
 use crate::error::{Error, Result};
@@ -28,10 +28,11 @@ pub struct DeviceSelector {
     selected_filtered_index: usize,
     search_query: String,
     matcher: SkimMatcherV2,
+    error_message: Option<String>,
 }
 
 impl DeviceSelector {
-    fn new() -> Result<Self> {
+    fn new(error_message: Option<String>) -> Result<Self> {
         let mut devices: Vec<DeviceInfo> = evdev::enumerate()
             .map(|(path, device)| {
                 let name = device.name().unwrap_or("Unknown Device").to_string();
@@ -62,11 +63,15 @@ impl DeviceSelector {
             selected_filtered_index: 0,
             search_query: String::new(),
             matcher: SkimMatcherV2::default(),
+            error_message,
         })
     }
 
-    pub async fn run(terminal: &mut DefaultTerminal) -> Result<Option<DeviceInfo>> {
-        let mut selector = Self::new()?;
+    pub async fn run(
+        terminal: &mut DefaultTerminal,
+        error_message: Option<String>,
+    ) -> Result<Option<DeviceInfo>> {
+        let mut selector = Self::new(error_message)?;
         let mut term_events = TermEventStream::new();
 
         loop {
@@ -77,58 +82,63 @@ impl DeviceSelector {
                 .map_err(|err| Error::io("selector draw", err))?;
 
             match term_events.next().await {
-                Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => match key.code {
-                    KeyCode::Enter if !selector.filtered_indexes.is_empty() => {
-                        if let Some(&index) = selector
-                            .filtered_indexes
-                            .get(selector.selected_filtered_index)
-                        {
-                            return Ok(Some(selector.devices.swap_remove(index)));
+                Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                    if selector.error_message.is_some() {
+                        selector.error_message = None;
+                    }
+                    match key.code {
+                        KeyCode::Enter if !selector.filtered_indexes.is_empty() => {
+                            if let Some(&index) = selector
+                                .filtered_indexes
+                                .get(selector.selected_filtered_index)
+                            {
+                                return Ok(Some(selector.devices.swap_remove(index)));
+                            }
                         }
-                    }
-                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        return Ok(None);
-                    }
-                    KeyCode::Esc => {
-                        if selector.search_query.is_empty() {
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             return Ok(None);
-                        } else {
+                        }
+                        KeyCode::Esc => {
+                            if selector.search_query.is_empty() {
+                                return Ok(None);
+                            } else {
+                                selector.clear_search();
+                            }
+                        }
+                        KeyCode::Up => {
+                            selector.navigate_up();
+                        }
+                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            selector.navigate_up();
+                        }
+                        KeyCode::Down => {
+                            selector.navigate_down();
+                        }
+                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            selector.navigate_down();
+                        }
+                        KeyCode::PageUp => {
+                            selector.navigate_page(-1);
+                        }
+                        KeyCode::PageDown => {
+                            selector.navigate_page(1);
+                        }
+                        KeyCode::Home => selector.select_home(),
+                        KeyCode::End => selector.select_end(),
+                        KeyCode::Backspace => {
+                            selector.remove_char();
+                        }
+                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                             selector.clear_search();
                         }
+                        KeyCode::Char(c)
+                            if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
+                        {
+                            selector.add_char(c);
+                        }
+                        _ => {}
                     }
-                    KeyCode::Up => {
-                        selector.navigate_up();
-                    }
-                    KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        selector.navigate_up();
-                    }
-                    KeyCode::Down => {
-                        selector.navigate_down();
-                    }
-                    KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        selector.navigate_down();
-                    }
-                    KeyCode::PageUp => {
-                        selector.navigate_page(-1);
-                    }
-                    KeyCode::PageDown => {
-                        selector.navigate_page(1);
-                    }
-                    KeyCode::Home => selector.select_home(),
-                    KeyCode::End => selector.select_end(),
-                    KeyCode::Backspace => {
-                        selector.remove_char();
-                    }
-                    KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                        selector.clear_search();
-                    }
-                    KeyCode::Char(c)
-                        if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
-                    {
-                        selector.add_char(c);
-                    }
-                    _ => {}
-                },
+                }
                 Some(Ok(_)) => {}
                 Some(Err(err)) => return Err(Error::terminal("terminal event stream", err)),
                 None => return Err(Error::stream_ended("terminal event stream")),
@@ -235,6 +245,7 @@ impl DeviceSelector {
         self.render_search_box(search_area, buf);
         self.render_device_list(list_area, buf);
         self.render_footer(footer_area, buf);
+        self.render_error_popup(area, buf);
     }
 
     fn render_search_box(&self, area: Rect, buf: &mut Buffer) {
@@ -290,10 +301,39 @@ impl DeviceSelector {
             "Enter: select | Esc: clear/exit | Ctrl-C: quit | ↑/↓/PgUp/PgDn/Home/End: navigate | Ctrl-U: clear | Matches: {}/{}",
             filtered, total
         );
-
         Paragraph::new(footer_text)
             .style(Style::new().fg(tailwind::SLATE.c200).bold())
             .alignment(Alignment::Center)
             .render(area, buf);
+    }
+
+    fn render_error_popup(&self, area: Rect, buf: &mut Buffer) {
+        let Some(message) = &self.error_message else {
+            return;
+        };
+
+        if area.width < 10 || area.height < 3 {
+            return;
+        }
+
+        let width = area.width.min(80);
+        let height = area.height.min(5).max(3);
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup_area = Rect::new(x, y, width, height);
+
+        Clear.render(popup_area, buf);
+
+        Paragraph::new(message.as_str())
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Error ")
+                    .style(Style::new().fg(tailwind::RED.c400).bold()),
+            )
+            .style(Style::new().fg(tailwind::RED.c400).bold())
+            .alignment(Alignment::Center)
+            .wrap(Wrap { trim: true })
+            .render(popup_area, buf);
     }
 }
