@@ -43,6 +43,9 @@ impl ButtonGrid {
         if metrics.max_rows == 0 {
             return;
         }
+        if metrics.button_width <= config::BTN_COL_GAP {
+            return;
+        }
 
         let start_button = scroll_row_offset * config::BUTTONS_PER_ROW;
         let max_visible_buttons = metrics.max_rows * config::BUTTONS_PER_ROW;
