@@ -317,12 +317,27 @@ impl DeviceMonitor {
 
     fn render_content(&mut self, area: Rect, buf: &mut Buffer) -> bool {
         let counts = &self.counts;
+        let button_width = area.width / config::BUTTONS_PER_ROW as u16;
+        let buttons_width_ok = button_width > config::BTN_COL_GAP;
+        let btn_rows = if buttons_width_ok {
+            counts.btn_rows()
+        } else {
+            0
+        };
         // Derive what is actually renderable for axes in this layout pass
-        let sizer = SectionSizer::new(area, counts.btn_rows(), counts.abs, counts.rel);
+        let sizer = SectionSizer::new(area, btn_rows, counts.abs, counts.rel);
 
         let abs_visible = Self::axes_renderable(sizer.abs_area, counts.abs);
         let rel_visible = Self::axes_renderable(sizer.rel_area, counts.rel);
-        let buttons_visible = sizer.btn_area.is_some();
+        let button_rows_capacity = if counts.btn == 0 {
+            0
+        } else {
+            sizer
+                .btn_area
+                .map(|btn_area| self.buttons_visible_rows(btn_area))
+                .unwrap_or(0)
+        };
+        let buttons_visible = button_rows_capacity > 0;
 
         self.effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
 
@@ -334,20 +349,12 @@ impl DeviceMonitor {
         self.axes_max_start = Self::aligned_window_start(total_axes, axes_visible_capacity, 1);
 
         // Compute buttons window capacity and last valid buttons start, row-aligned.
-        let button_capacity = sizer
-            .btn_area
-            .map(|btn_area| self.buttons_visible_capacity(btn_area))
-            .unwrap_or(0);
-
-        self.buttons_max_start = if button_capacity == 0 {
+        self.buttons_max_start = if button_rows_capacity == 0 {
             total_axes
         } else {
-            let aligned_start = Self::aligned_window_start(
-                self.effective_counts.btn,
-                button_capacity,
-                config::BUTTONS_PER_ROW,
-            );
-            total_axes + aligned_start
+            let total_button_rows = self.effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
+            let max_row_start = total_button_rows.saturating_sub(button_rows_capacity);
+            total_axes + (max_row_start * config::BUTTONS_PER_ROW)
         };
 
         // If everything fits, anchor to top; otherwise clamp within range and
@@ -464,18 +471,13 @@ impl DeviceMonitor {
         abs_cap + rel_cap
     }
 
-    fn buttons_visible_capacity(&self, btn_area: Rect) -> usize {
-        if self.effective_counts.btn == 0 {
-            return 0;
+    fn buttons_visible_rows(&self, btn_area: Rect) -> usize {
+        let metrics = ButtonGrid::metrics(btn_area);
+        if metrics.renderable() {
+            metrics.max_rows
+        } else {
+            0
         }
-        if btn_area.height <= config::BTN_SECTION_VERT_PADDING {
-            return 0;
-        }
-        let usable_h = btn_area
-            .height
-            .saturating_sub(config::BTN_SECTION_VERT_PADDING);
-        let max_rows = (usable_h / config::BUTTON_HEIGHT) as usize;
-        (max_rows * config::BUTTONS_PER_ROW).min(self.effective_counts.btn)
     }
 
     fn aligned_window_start(count: usize, capacity: usize, align: usize) -> usize {

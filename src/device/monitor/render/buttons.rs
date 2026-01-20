@@ -18,8 +18,14 @@ pub(crate) struct GridMetrics {
     pub(crate) max_rows: usize,
 }
 
+impl GridMetrics {
+    pub(crate) fn renderable(&self) -> bool {
+        self.max_rows > 0 && self.button_width > config::BTN_COL_GAP
+    }
+}
+
 impl ButtonGrid {
-    fn metrics(area: Rect) -> GridMetrics {
+    pub(crate) fn metrics(area: Rect) -> GridMetrics {
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
         let max_rows = ((area.height.saturating_sub(config::BTN_SECTION_VERT_PADDING))
             / config::BUTTON_HEIGHT) as usize;
@@ -40,19 +46,20 @@ impl ButtonGrid {
         }
 
         let metrics = Self::metrics(area);
-        if metrics.max_rows == 0 {
-            return;
-        }
-        if metrics.button_width <= config::BTN_COL_GAP {
+        if !metrics.renderable() {
             return;
         }
 
         let start_button = scroll_row_offset * config::BUTTONS_PER_ROW;
         let max_visible_buttons = metrics.max_rows * config::BUTTONS_PER_ROW;
-        let (start, count) = ui::visible_window(buttons.len(), start_button, max_visible_buttons);
+        let remaining = buttons.len().saturating_sub(start_button);
+        let count = remaining.min(max_visible_buttons);
+        if count == 0 {
+            return;
+        }
 
         for i in 0..count {
-            let idx = start + i;
+            let idx = start_button + i;
             let Some(button) = buttons.get(idx) else {
                 break;
             };
@@ -94,5 +101,69 @@ impl ButtonGrid {
             .alignment(Alignment::Center)
             .style(config::style_label())
             .render(area, buf);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use crate::device::monitor::{
+        config,
+        model::{DeviceInput, InputKind},
+        render::buttons::ButtonGrid,
+    };
+
+    fn build_buttons(count: usize) -> Vec<DeviceInput> {
+        (0..count)
+            .map(|idx| DeviceInput {
+                name: format!("b{idx}"),
+                input_type: InputKind::Button(false),
+            })
+            .collect()
+    }
+
+    fn buffer_contains(buf: &Buffer, text: &str) -> bool {
+        let area = buf.area;
+        (0..area.height).any(|y| {
+            let mut line = String::new();
+            for x in 0..area.width {
+                line.push_str(buf[(x, y)].symbol());
+            }
+            line.contains(text)
+        })
+    }
+
+    fn buffer_is_blank(buf: &Buffer) -> bool {
+        buf.content().iter().all(|cell| cell.symbol() == " ")
+    }
+
+    #[test]
+    fn render_with_scroll_shows_partial_last_row() {
+        let inputs = build_buttons(config::BUTTONS_PER_ROW + 1);
+        let refs: Vec<&DeviceInput> = inputs.iter().collect();
+        let width = config::BUTTONS_PER_ROW as u16 * 6;
+        let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+
+        ButtonGrid::render_with_scroll(&refs, area, 1, &mut buf);
+
+        assert!(buffer_contains(&buf, "b6"));
+        assert!(!buffer_contains(&buf, "b0"));
+    }
+
+    #[test]
+    fn render_with_scroll_skips_when_too_narrow() {
+        let inputs = build_buttons(config::BUTTONS_PER_ROW);
+        let refs: Vec<&DeviceInput> = inputs.iter().collect();
+        let width = config::BUTTONS_PER_ROW as u16;
+        let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
+        let area = Rect::new(0, 0, width, height);
+        let mut buf = Buffer::empty(area);
+
+        ButtonGrid::render_with_scroll(&refs, area, 0, &mut buf);
+
+        assert!(buffer_is_blank(&buf));
     }
 }
