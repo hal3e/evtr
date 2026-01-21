@@ -38,8 +38,10 @@ pub struct DeviceMonitor {
     counts: Counts,
     // Counts adjusted to what is actually renderable in the current layout
     effective_counts: Counts,
-    // Max starting index for axes page (avoid dead-range overshoot)
-    axes_max_start: usize,
+    // Max scroll steps across axes (abs then rel).
+    axes_scroll_max: usize,
+    abs_max_start: usize,
+    rel_max_start: usize,
     // Max starting offset (global) for buttons page start, aligned to row starts
     buttons_max_start: usize,
 }
@@ -93,27 +95,27 @@ impl ScrollState {
     fn scroll_page(
         &mut self,
         counts: &Counts,
-        axes_max_start: usize,
+        axes_scroll_max: usize,
         buttons_max_start: usize,
         dir: i32,
     ) {
         for _ in 0..config::PAGE_SCROLL_STEPS {
-            self.scroll_step(counts, axes_max_start, buttons_max_start, dir);
+            self.scroll_step(counts, axes_scroll_max, buttons_max_start, dir);
         }
     }
 
-    fn scroll_up(&mut self, counts: &Counts, axes_max_start: usize, buttons_max_start: usize) {
-        self.scroll_step(counts, axes_max_start, buttons_max_start, -1);
+    fn scroll_up(&mut self, counts: &Counts, axes_scroll_max: usize, buttons_max_start: usize) {
+        self.scroll_step(counts, axes_scroll_max, buttons_max_start, -1);
     }
 
-    fn scroll_down(&mut self, counts: &Counts, axes_max_start: usize, buttons_max_start: usize) {
-        self.scroll_step(counts, axes_max_start, buttons_max_start, 1);
+    fn scroll_down(&mut self, counts: &Counts, axes_scroll_max: usize, buttons_max_start: usize) {
+        self.scroll_step(counts, axes_scroll_max, buttons_max_start, 1);
     }
 
     fn scroll_step(
         &mut self,
         counts: &Counts,
-        axes_max_start: usize,
+        axes_scroll_max: usize,
         buttons_max_start: usize,
         direction: i32,
     ) {
@@ -128,11 +130,11 @@ impl ScrollState {
                     self.offset = total_axes + ((current_button_row - 1) * config::BUTTONS_PER_ROW);
                 } else {
                     // From first button row back into axes: snap to end-of-axes window
-                    self.offset = axes_max_start;
+                    self.offset = axes_scroll_max;
                 }
             } else if self.offset == total_axes && total_axes > 0 {
                 // Exactly at boundary, snap to end-of-axes window
-                self.offset = axes_max_start;
+                self.offset = axes_scroll_max;
             } else if self.offset > 0 {
                 // Within axes, step up by one
                 self.offset -= 1;
@@ -141,7 +143,7 @@ impl ScrollState {
             // Down
             if self.offset < total_axes {
                 // Within axes: cap at last visible start; then jump to buttons
-                if self.offset < axes_max_start {
+                if self.offset < axes_scroll_max {
                     self.offset += 1;
                 } else if counts.btn > 0 {
                     // Jump to first button row
@@ -167,10 +169,6 @@ impl ScrollState {
         button_scroll_offset / config::BUTTONS_PER_ROW
     }
 
-    fn axis_offsets(&self, abs_count: usize) -> (usize, usize) {
-        (self.offset, self.offset.saturating_sub(abs_count))
-    }
-
     fn align_for_buttons(&mut self, total_axes: usize) {
         if self.offset >= total_axes {
             let button_index = self.offset - total_axes;
@@ -182,7 +180,7 @@ impl ScrollState {
     fn clamp_and_align(
         &mut self,
         counts: &Counts,
-        axes_max_start: usize,
+        axes_scroll_max: usize,
         buttons_max_start: usize,
     ) {
         let total_axes = counts.total_axes();
@@ -190,13 +188,45 @@ impl ScrollState {
         self.offset = self.offset.min(max_offset);
         if self.offset < total_axes {
             // Clamp axes scroll to last fully-visible page.
-            self.offset = self.offset.min(axes_max_start);
+            self.offset = self.offset.min(axes_scroll_max);
         } else {
             // Align button scroll to the start of a row.
             self.align_for_buttons(total_axes);
             // Do not allow starts beyond the last full-page start.
             self.offset = self.offset.min(buttons_max_start);
         }
+    }
+}
+
+fn axis_offsets_for(
+    scroll_offset: usize,
+    total_axes: usize,
+    abs_count: usize,
+    rel_count: usize,
+    abs_max_start: usize,
+    rel_max_start: usize,
+) -> (usize, usize) {
+    let axes_scroll_max = abs_max_start + rel_max_start;
+    let axis_scroll = if scroll_offset >= total_axes {
+        axes_scroll_max
+    } else {
+        scroll_offset.min(axes_scroll_max)
+    };
+
+    match (abs_count > 0, rel_count > 0) {
+        (true, true) => {
+            if axis_scroll <= abs_max_start {
+                (axis_scroll, 0)
+            } else {
+                (
+                    abs_max_start,
+                    (axis_scroll - abs_max_start).min(rel_max_start),
+                )
+            }
+        }
+        (true, false) => (axis_scroll.min(abs_max_start), 0),
+        (false, true) => (0, axis_scroll.min(rel_max_start)),
+        (false, false) => (0, 0),
     }
 }
 
@@ -219,7 +249,9 @@ impl DeviceMonitor {
             identifier,
             effective_counts: counts,
             counts,
-            axes_max_start: 0,
+            axes_scroll_max: 0,
+            abs_max_start: 0,
+            rel_max_start: 0,
             buttons_max_start: 0,
         })
     }
@@ -243,7 +275,7 @@ impl DeviceMonitor {
                                 Command::Scroll(dir) => monitor.scroll_by(dir),
                                 Command::Page(dir) => {
                                     let counts = monitor.effective_counts;
-                                    let axes_max = monitor.axes_max_start;
+                                    let axes_max = monitor.axes_scroll_max;
                                     let buttons_max = monitor.buttons_max_start;
                                     monitor
                                         .scroll
@@ -277,7 +309,7 @@ impl DeviceMonitor {
             return;
         }
         let counts = self.effective_counts;
-        let axes_max = self.axes_max_start;
+        let axes_max = self.axes_scroll_max;
         let buttons_max = self.buttons_max_start;
         if direction < 0 {
             self.scroll.scroll_up(&counts, axes_max, buttons_max);
@@ -291,9 +323,13 @@ impl DeviceMonitor {
             self.scroll.offset = 0;
             return;
         }
-        self.scroll.offset = self.effective_counts.max_offset();
-        self.scroll
-            .align_for_buttons(self.effective_counts.total_axes());
+        if self.effective_counts.btn == 0 {
+            self.scroll.offset = self.axes_scroll_max;
+        } else {
+            self.scroll.offset = self.effective_counts.max_offset();
+            self.scroll
+                .align_for_buttons(self.effective_counts.total_axes());
+        }
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
@@ -343,10 +379,20 @@ impl DeviceMonitor {
 
         let total_axes = self.effective_counts.total_axes();
 
-        // Compute axes window capacity and last valid axes start index to
-        // avoid dead-range overshoot at the end of the axes sections.
-        let axes_visible_capacity = self.axes_visible_capacity(&sizer);
-        self.axes_max_start = Self::aligned_window_start(total_axes, axes_visible_capacity, 1);
+        let abs_visible_capacity = sizer
+            .abs_area
+            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.abs))
+            .unwrap_or(0);
+        let rel_visible_capacity = sizer
+            .rel_area
+            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.rel))
+            .unwrap_or(0);
+
+        self.abs_max_start =
+            Self::aligned_window_start(self.effective_counts.abs, abs_visible_capacity, 1);
+        self.rel_max_start =
+            Self::aligned_window_start(self.effective_counts.rel, rel_visible_capacity, 1);
+        self.axes_scroll_max = self.abs_max_start + self.rel_max_start;
 
         // Compute buttons window capacity and last valid buttons start, row-aligned.
         self.buttons_max_start = if button_rows_capacity == 0 {
@@ -365,7 +411,7 @@ impl DeviceMonitor {
         } else {
             self.scroll.clamp_and_align(
                 &self.effective_counts,
-                self.axes_max_start,
+                self.axes_scroll_max,
                 self.buttons_max_start,
             );
         }
@@ -374,13 +420,12 @@ impl DeviceMonitor {
         let rel_inputs: InputsVec = self.inputs.iter_relative().collect();
         let btn_inputs: InputsVec = self.inputs.iter_buttons().collect();
 
+        let (abs_off, rel_off) = self.axis_offsets();
         if let Some(abs_area) = sizer.abs_area {
-            let (abs_off, _) = self.scroll.axis_offsets(self.effective_counts.abs);
             AxisRenderer::render_axes_with_scroll(&abs_inputs, abs_area, abs_off, buf);
         }
 
         if let Some(rel_area) = sizer.rel_area {
-            let (_, rel_off) = self.scroll.axis_offsets(self.effective_counts.abs);
             AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
         }
 
@@ -412,6 +457,17 @@ impl DeviceMonitor {
 
     fn has_overflow(&self) -> bool {
         self.overflow_from_counts(&self.effective_counts)
+    }
+
+    fn axis_offsets(&self) -> (usize, usize) {
+        axis_offsets_for(
+            self.scroll.offset,
+            self.effective_counts.total_axes(),
+            self.effective_counts.abs,
+            self.effective_counts.rel,
+            self.abs_max_start,
+            self.rel_max_start,
+        )
     }
 
     fn build_footer_text(&self, counts: &Counts, overflow: bool) -> String {
@@ -459,18 +515,6 @@ impl DeviceMonitor {
         }
     }
 
-    fn axes_visible_capacity(&self, sizer: &SectionSizer) -> usize {
-        let abs_cap = sizer
-            .abs_area
-            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.abs))
-            .unwrap_or(0);
-        let rel_cap = sizer
-            .rel_area
-            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.rel))
-            .unwrap_or(0);
-        abs_cap + rel_cap
-    }
-
     fn buttons_visible_rows(&self, btn_area: Rect) -> usize {
         let metrics = ButtonGrid::metrics(btn_area);
         if metrics.renderable() {
@@ -490,5 +534,34 @@ impl DeviceMonitor {
         } else {
             (max_start / align) * align
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::axis_offsets_for;
+
+    #[test]
+    fn axis_offsets_scroll_rel_after_abs() {
+        assert_eq!(axis_offsets_for(6, 20, 10, 10, 6, 6), (6, 0));
+        assert_eq!(axis_offsets_for(7, 20, 10, 10, 6, 6), (6, 1));
+        assert_eq!(axis_offsets_for(12, 20, 10, 10, 6, 6), (6, 6));
+    }
+
+    #[test]
+    fn axis_offsets_clamp_in_buttons_region() {
+        assert_eq!(axis_offsets_for(25, 20, 10, 10, 6, 6), (6, 6));
+    }
+
+    #[test]
+    fn axis_offsets_rel_only() {
+        assert_eq!(axis_offsets_for(1, 5, 0, 5, 0, 2), (0, 1));
+        assert_eq!(axis_offsets_for(4, 5, 0, 5, 0, 2), (0, 2));
+    }
+
+    #[test]
+    fn axis_offsets_abs_present_no_scroll() {
+        assert_eq!(axis_offsets_for(1, 8, 2, 6, 0, 3), (0, 1));
+        assert_eq!(axis_offsets_for(3, 8, 2, 6, 0, 3), (0, 3));
     }
 }
