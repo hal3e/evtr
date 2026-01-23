@@ -44,6 +44,8 @@ pub struct DeviceMonitor {
     rel_max_start: usize,
     // Max starting offset (global) for buttons page start, aligned to row starts
     buttons_max_start: usize,
+    last_overflow: bool,
+    scroll_seeded: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -146,8 +148,9 @@ impl ScrollState {
                 if self.offset < axes_scroll_max {
                     self.offset += 1;
                 } else if counts.btn > 0 {
-                    // Jump to first button row
-                    self.offset = total_axes;
+                    // Jump to next button row when buttons already render.
+                    let next_row = total_axes + config::BUTTONS_PER_ROW;
+                    self.offset = next_row.min(buttons_max_start);
                 }
             } else {
                 // Within buttons: advance by full rows
@@ -253,6 +256,8 @@ impl DeviceMonitor {
             abs_max_start: 0,
             rel_max_start: 0,
             buttons_max_start: 0,
+            last_overflow: false,
+            scroll_seeded: false,
         })
     }
 
@@ -405,10 +410,23 @@ impl DeviceMonitor {
 
         // If everything fits, anchor to top; otherwise clamp within range and
         // align to button-row starts when in button region.
-        let has_overflow = self.overflow_from_counts(&self.effective_counts);
+        let has_overflow = self.overflow_from_capacity(
+            abs_visible_capacity,
+            rel_visible_capacity,
+            button_rows_capacity,
+        );
+        self.last_overflow = has_overflow;
         if !has_overflow {
             self.scroll.offset = 0;
+            self.scroll_seeded = false;
         } else {
+            if !self.scroll_seeded
+                && self.axes_scroll_max == 0
+                && button_rows_capacity * config::BUTTONS_PER_ROW < self.effective_counts.btn
+            {
+                self.scroll.offset = total_axes;
+                self.scroll_seeded = true;
+            }
             self.scroll.clamp_and_align(
                 &self.effective_counts,
                 self.axes_scroll_max,
@@ -456,7 +474,7 @@ impl DeviceMonitor {
     }
 
     fn has_overflow(&self) -> bool {
-        self.overflow_from_counts(&self.effective_counts)
+        self.last_overflow
     }
 
     fn axis_offsets(&self) -> (usize, usize) {
@@ -484,11 +502,15 @@ impl DeviceMonitor {
         }
     }
 
-    fn overflow_from_counts(&self, counts: &Counts) -> bool {
-        let (min_axes_height, btn_height) =
-            layout::section_min_heights(counts.btn_rows(), counts.abs, counts.rel);
-        let total_min_height = min_axes_height + btn_height;
-        total_min_height > self.last_content_area_height
+    fn overflow_from_capacity(
+        &self,
+        abs_capacity: usize,
+        rel_capacity: usize,
+        button_rows_capacity: usize,
+    ) -> bool {
+        abs_capacity < self.effective_counts.abs
+            || rel_capacity < self.effective_counts.rel
+            || button_rows_capacity * config::BUTTONS_PER_ROW < self.effective_counts.btn
     }
 
     fn footer_prefix(has_relative: bool, overflow: bool) -> &'static str {
@@ -539,6 +561,8 @@ impl DeviceMonitor {
 
 #[cfg(test)]
 mod tests {
+    use crate::device::monitor::{Counts, ScrollState};
+
     use super::axis_offsets_for;
 
     #[test]
@@ -563,5 +587,19 @@ mod tests {
     fn axis_offsets_abs_present_no_scroll() {
         assert_eq!(axis_offsets_for(1, 8, 2, 6, 0, 3), (0, 1));
         assert_eq!(axis_offsets_for(3, 8, 2, 6, 0, 3), (0, 3));
+    }
+
+    #[test]
+    fn scroll_step_jumps_to_next_button_row() {
+        let counts = Counts {
+            abs: 4,
+            rel: 4,
+            btn: 12,
+        };
+        let mut scroll = ScrollState { offset: 6 };
+
+        scroll.scroll_step(&counts, 6, 14, 1);
+
+        assert_eq!(scroll.offset, 14);
     }
 }

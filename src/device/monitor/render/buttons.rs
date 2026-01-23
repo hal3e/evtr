@@ -1,9 +1,10 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
-    style::{Color, Stylize},
+    style::Color,
     widgets::{Block, Borders, Paragraph, Widget},
 };
+use ratatui::prelude::Stylize;
 
 use crate::device::monitor::{
     config,
@@ -16,22 +17,46 @@ pub(crate) struct ButtonGrid;
 pub(crate) struct GridMetrics {
     pub(crate) button_width: u16,
     pub(crate) max_rows: usize,
+    pub(crate) row_height: u16,
+    pub(crate) top_padding: u16,
+    pub(crate) col_gap: u16,
+    pub(crate) compact: bool,
 }
 
 impl GridMetrics {
     pub(crate) fn renderable(&self) -> bool {
-        self.max_rows > 0 && self.button_width > config::BTN_COL_GAP
+        self.max_rows > 0 && self.button_width > self.col_gap
     }
 }
 
 impl ButtonGrid {
     pub(crate) fn metrics(area: Rect) -> GridMetrics {
+        let compact = area.height < config::BUTTON_HEIGHT + config::BTN_SECTION_VERT_PADDING;
+        let row_height = if compact { 1 } else { config::BUTTON_HEIGHT };
+        let top_padding = if compact {
+            0
+        } else {
+            config::BTN_SECTION_TOP_PADDING
+        };
+        let col_gap = if compact {
+            config::COMPACT_BTN_COL_GAP
+        } else {
+            config::BTN_COL_GAP
+        };
+        let vert_padding = if compact {
+            0
+        } else {
+            config::BTN_SECTION_VERT_PADDING
+        };
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
-        let max_rows = ((area.height.saturating_sub(config::BTN_SECTION_VERT_PADDING))
-            / config::BUTTON_HEIGHT) as usize;
+        let max_rows = (area.height.saturating_sub(vert_padding) / row_height) as usize;
         GridMetrics {
             button_width,
             max_rows,
+            row_height,
+            top_padding,
+            col_gap,
+            compact,
         }
     }
 
@@ -41,7 +66,7 @@ impl ButtonGrid {
         scroll_row_offset: usize,
         buf: &mut Buffer,
     ) {
-        if buttons.is_empty() || area.height < config::BUTTON_HEIGHT {
+        if buttons.is_empty() {
             return;
         }
 
@@ -64,8 +89,12 @@ impl ButtonGrid {
                 break;
             };
             let (row, col) = Self::grid_position(i);
-            let button_area = Self::calculate_button_area(area, row, col, metrics.button_width);
-            Self::render_button(button_area, button, buf);
+            let button_area = Self::calculate_button_area(area, row, col, &metrics);
+            Self::render_button(button_area, button, metrics.compact, buf);
+        }
+
+        if metrics.compact && metrics.col_gap > 0 {
+            Self::render_compact_separators(area, &metrics, count, buf);
         }
     }
 
@@ -76,31 +105,70 @@ impl ButtonGrid {
         )
     }
 
-    fn calculate_button_area(area: Rect, row: usize, col: usize, button_width: u16) -> Rect {
+    fn calculate_button_area(area: Rect, row: usize, col: usize, metrics: &GridMetrics) -> Rect {
         Rect::new(
-            area.x + (col as u16 * button_width),
-            area.y + config::BTN_SECTION_TOP_PADDING + (row as u16 * config::BUTTON_HEIGHT),
-            button_width.saturating_sub(config::BTN_COL_GAP),
-            config::BUTTON_HEIGHT,
+            area.x + (col as u16 * metrics.button_width),
+            area.y + metrics.top_padding + (row as u16 * metrics.row_height),
+            metrics.button_width.saturating_sub(metrics.col_gap),
+            metrics.row_height,
         )
     }
 
-    fn render_button(area: Rect, input: &DeviceInput, buf: &mut Buffer) {
+    fn render_button(area: Rect, input: &DeviceInput, compact: bool, buf: &mut Buffer) {
         let pressed = matches!(input.input_type, InputKind::Button(true));
-
-        let block = Block::default().borders(Borders::ALL).bg(if pressed {
-            config::COLOR_BUTTON_PRESSED
+        let available_width = if compact {
+            area.width
         } else {
-            Color::default()
-        });
+            area.width.saturating_sub(2)
+        };
+        let text = ui::truncate_utf8(&input.name, available_width as usize);
+        if compact {
+            let mut label_style = config::style_label();
+            if pressed {
+                label_style = label_style.bg(config::COLOR_BUTTON_PRESSED);
+            }
+            Paragraph::new(text)
+                .alignment(Alignment::Center)
+                .style(label_style)
+                .render(area, buf);
+        } else {
+            let bg = if pressed {
+                config::COLOR_BUTTON_PRESSED
+            } else {
+                Color::default()
+            };
+            Paragraph::new(text)
+                .alignment(Alignment::Center)
+                .style(config::style_label())
+                .block(Block::default().borders(Borders::ALL).bg(bg))
+                .render(area, buf);
+        }
+    }
 
-        let text = ui::truncate_utf8(&input.name, area.width.saturating_sub(2) as usize);
-
-        Paragraph::new(text)
-            .block(block)
-            .alignment(Alignment::Center)
-            .style(config::style_label())
-            .render(area, buf);
+    fn render_compact_separators(area: Rect, metrics: &GridMetrics, count: usize, buf: &mut Buffer) {
+        if metrics.col_gap == 0 {
+            return;
+        }
+        let columns = config::BUTTONS_PER_ROW;
+        let rows = (count + columns - 1) / columns;
+        let sep_style = config::style_label();
+        for row in 0..rows {
+            let row_start = row * columns;
+            let buttons_in_row = (count - row_start).min(columns);
+            if buttons_in_row <= 1 {
+                continue;
+            }
+            for col in 0..(buttons_in_row - 1) {
+                let x = area.x
+                    + (col as u16 * metrics.button_width)
+                    + metrics.button_width.saturating_sub(metrics.col_gap);
+                let y = area.y + metrics.top_padding + (row as u16 * metrics.row_height);
+                if x >= area.x + area.width || y >= area.y + area.height {
+                    continue;
+                }
+                buf[(x, y)].set_symbol("|").set_style(sep_style);
+            }
+        }
     }
 }
 
@@ -165,5 +233,18 @@ mod tests {
         ButtonGrid::render_with_scroll(&refs, area, 0, &mut buf);
 
         assert!(buffer_is_blank(&buf));
+    }
+
+    #[test]
+    fn render_compact_buttons_in_single_line() {
+        let inputs = build_buttons(config::BUTTONS_PER_ROW);
+        let refs: Vec<&DeviceInput> = inputs.iter().collect();
+        let width = config::BUTTONS_PER_ROW as u16 * 3;
+        let area = Rect::new(0, 0, width, 1);
+        let mut buf = Buffer::empty(area);
+
+        ButtonGrid::render_with_scroll(&refs, area, 0, &mut buf);
+
+        assert!(buffer_contains(&buf, "b0"));
     }
 }

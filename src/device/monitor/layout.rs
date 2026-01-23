@@ -43,25 +43,51 @@ impl SectionSizer {
             };
         }
 
-        // Prefer to size axes so a full button section could fit beneath, if space allows.
-        let target_axes_available = if btn_rows > 0 {
-            area.height.saturating_sub(btn_height_full)
+        let min_button_height_full = if btn_rows > 0 {
+            config::BUTTON_HEIGHT + config::BTN_SECTION_VERT_PADDING
         } else {
-            area.height
+            0
         };
-        let axes_height = optimal_axes_height(
-            min_axes_height,
-            target_axes_available,
-            total_axes,
-            abs_count > 0 && rel_count > 0,
-        );
+        let min_axes_for_buttons = if total_axes > 0 {
+            config::AXIS_GAP + 1
+        } else {
+            0
+        };
+        let button_min_height = if btn_rows == 0 {
+            0
+        } else if area.height >= min_axes_for_buttons + min_button_height_full {
+            min_button_height_full
+        } else if area.height > min_axes_for_buttons {
+            1
+        } else {
+            0
+        };
+        let axes_height = if btn_rows > 0 && button_min_height == 0 {
+            // Keep 1-row bars until at least one button row can render.
+            min_axes_height.min(area.height)
+        } else {
+            // Prefer axes, but only grow them beyond 1-row bars if a button row can render.
+            let axes_available = if button_min_height > 0 {
+                area.height.saturating_sub(button_min_height)
+            } else {
+                area.height
+            };
+            optimal_axes_height(
+                min_axes_height,
+                axes_available,
+                total_axes,
+                abs_count > 0 && rel_count > 0,
+            )
+        };
 
         let axes_area = Rect::new(area.x, area.y, area.width, axes_height);
 
         // Place buttons immediately after axes; clamp to remaining height.
         let remaining_after_axes = area.height.saturating_sub(axes_height);
         let btn_h = if btn_rows > 0 {
-            btn_height_full.min(remaining_after_axes)
+            button_min_height
+                .max(btn_height_full.min(remaining_after_axes))
+                .min(remaining_after_axes)
         } else {
             0
         };
