@@ -1,10 +1,10 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Rect},
+    prelude::Stylize,
     style::Color,
     widgets::{Block, Borders, Paragraph, Widget},
 };
-use ratatui::prelude::Stylize;
 
 use crate::device::monitor::{
     config,
@@ -145,12 +145,17 @@ impl ButtonGrid {
         }
     }
 
-    fn render_compact_separators(area: Rect, metrics: &GridMetrics, count: usize, buf: &mut Buffer) {
+    fn render_compact_separators(
+        area: Rect,
+        metrics: &GridMetrics,
+        count: usize,
+        buf: &mut Buffer,
+    ) {
         if metrics.col_gap == 0 {
             return;
         }
         let columns = config::BUTTONS_PER_ROW;
-        let rows = (count + columns - 1) / columns;
+        let rows = count.div_ceil(columns);
         let sep_style = config::style_label();
         for row in 0..rows {
             let row_start = row * columns;

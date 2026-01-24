@@ -15,37 +15,41 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
-    widgets::{Paragraph, Widget},
+    widgets::{Block, Borders, Paragraph, Widget},
 };
 use tokio::select;
 
-use crate::error::{Error, Result};
-
 use self::{
     controls::Command,
-    layout::{SectionSizer, main_layout},
+    layout::{axes_layout, box_layout, main_layout},
     model::{InputCollection, InputsVec},
     render::{axis::AxisRenderer, buttons::ButtonGrid},
 };
-use crate::device::DeviceInfo;
+use crate::{
+    device::DeviceInfo,
+    error::{Error, Result},
+};
 
 pub struct DeviceMonitor {
     device_stream: evdev::EventStream,
     inputs: InputCollection,
-    scroll: ScrollState,
-    last_content_area_height: u16,
     identifier: String,
     counts: Counts,
     // Counts adjusted to what is actually renderable in the current layout
     effective_counts: Counts,
+    focus: Focus,
+    axis_scroll: usize,
+    button_row_scroll: usize,
     // Max scroll steps across axes (abs then rel).
     axes_scroll_max: usize,
     abs_max_start: usize,
     rel_max_start: usize,
-    // Max starting offset (global) for buttons page start, aligned to row starts
-    buttons_max_start: usize,
-    last_overflow: bool,
-    scroll_seeded: bool,
+    // Max starting row offset for buttons
+    button_row_max_start: usize,
+    axes_box_present: bool,
+    buttons_box_present: bool,
+    axes_overflow: bool,
+    buttons_overflow: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -59,21 +63,6 @@ impl Counts {
     fn total_axes(&self) -> usize {
         self.abs + self.rel
     }
-    fn btn_rows(&self) -> usize {
-        self.btn.div_ceil(config::BUTTONS_PER_ROW)
-    }
-    fn max_offset(&self) -> usize {
-        let total_axes = self.total_axes();
-        if self.btn == 0 {
-            total_axes.saturating_sub(1)
-        } else {
-            let last_row_start = self
-                .btn_rows()
-                .saturating_sub(1)
-                .saturating_mul(config::BUTTONS_PER_ROW);
-            total_axes.saturating_add(last_row_start)
-        }
-    }
 
     fn filtered(&self, abs_visible: bool, rel_visible: bool, buttons_visible: bool) -> Self {
         Self {
@@ -84,137 +73,21 @@ impl Counts {
     }
 }
 
-#[derive(Debug, Default)]
-struct ScrollState {
-    offset: usize,
-}
-
-impl ScrollState {
-    fn new() -> Self {
-        Self { offset: 0 }
-    }
-
-    fn scroll_page(
-        &mut self,
-        counts: &Counts,
-        axes_scroll_max: usize,
-        buttons_max_start: usize,
-        dir: i32,
-    ) {
-        for _ in 0..config::PAGE_SCROLL_STEPS {
-            self.scroll_step(counts, axes_scroll_max, buttons_max_start, dir);
-        }
-    }
-
-    fn scroll_up(&mut self, counts: &Counts, axes_scroll_max: usize, buttons_max_start: usize) {
-        self.scroll_step(counts, axes_scroll_max, buttons_max_start, -1);
-    }
-
-    fn scroll_down(&mut self, counts: &Counts, axes_scroll_max: usize, buttons_max_start: usize) {
-        self.scroll_step(counts, axes_scroll_max, buttons_max_start, 1);
-    }
-
-    fn scroll_step(
-        &mut self,
-        counts: &Counts,
-        axes_scroll_max: usize,
-        buttons_max_start: usize,
-        direction: i32,
-    ) {
-        let total_axes = counts.total_axes();
-        if direction < 0 {
-            // Up
-            if self.offset > total_axes {
-                // Within button rows: go to previous row start
-                let button_offset = self.offset - total_axes;
-                let current_button_row = button_offset / config::BUTTONS_PER_ROW;
-                if current_button_row > 0 {
-                    self.offset = total_axes + ((current_button_row - 1) * config::BUTTONS_PER_ROW);
-                } else {
-                    // From first button row back into axes: snap to end-of-axes window
-                    self.offset = axes_scroll_max;
-                }
-            } else if self.offset == total_axes && total_axes > 0 {
-                // Exactly at boundary, snap to end-of-axes window
-                self.offset = axes_scroll_max;
-            } else if self.offset > 0 {
-                // Within axes, step up by one
-                self.offset -= 1;
-            }
-        } else if direction > 0 {
-            // Down
-            if self.offset < total_axes {
-                // Within axes: cap at last visible start; then jump to buttons
-                if self.offset < axes_scroll_max {
-                    self.offset += 1;
-                } else if counts.btn > 0 {
-                    // Jump to next button row when buttons already render.
-                    let next_row = total_axes + config::BUTTONS_PER_ROW;
-                    self.offset = next_row.min(buttons_max_start);
-                }
-            } else {
-                // Within buttons: advance by full rows
-                let button_offset = self.offset - total_axes;
-                let current_button_row = button_offset / config::BUTTONS_PER_ROW;
-                let total_button_rows = counts.btn_rows();
-                let next = total_axes + ((current_button_row + 1) * config::BUTTONS_PER_ROW);
-                self.offset = self.offset.min(buttons_max_start);
-                if current_button_row + 1 < total_button_rows {
-                    // Move, but never exceed the last full-page start
-                    self.offset = next.min(buttons_max_start);
-                }
-            }
-        }
-    }
-
-    fn button_row_offset(&self, total_axes: usize) -> usize {
-        let button_scroll_offset = self.offset.saturating_sub(total_axes);
-        button_scroll_offset / config::BUTTONS_PER_ROW
-    }
-
-    fn align_for_buttons(&mut self, total_axes: usize) {
-        if self.offset >= total_axes {
-            let button_index = self.offset - total_axes;
-            let row_aligned = (button_index / config::BUTTONS_PER_ROW) * config::BUTTONS_PER_ROW;
-            self.offset = total_axes + row_aligned;
-        }
-    }
-
-    fn clamp_and_align(
-        &mut self,
-        counts: &Counts,
-        axes_scroll_max: usize,
-        buttons_max_start: usize,
-    ) {
-        let total_axes = counts.total_axes();
-        let max_offset = counts.max_offset();
-        self.offset = self.offset.min(max_offset);
-        if self.offset < total_axes {
-            // Clamp axes scroll to last fully-visible page.
-            self.offset = self.offset.min(axes_scroll_max);
-        } else {
-            // Align button scroll to the start of a row.
-            self.align_for_buttons(total_axes);
-            // Do not allow starts beyond the last full-page start.
-            self.offset = self.offset.min(buttons_max_start);
-        }
-    }
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Focus {
+    Axes,
+    Buttons,
 }
 
 fn axis_offsets_for(
-    scroll_offset: usize,
-    total_axes: usize,
+    axis_scroll: usize,
     abs_count: usize,
     rel_count: usize,
     abs_max_start: usize,
     rel_max_start: usize,
 ) -> (usize, usize) {
     let axes_scroll_max = abs_max_start + rel_max_start;
-    let axis_scroll = if scroll_offset >= total_axes {
-        axes_scroll_max
-    } else {
-        scroll_offset.min(axes_scroll_max)
-    };
+    let axis_scroll = axis_scroll.min(axes_scroll_max);
 
     match (abs_count > 0, rel_count > 0) {
         (true, true) => {
@@ -244,20 +117,28 @@ impl DeviceMonitor {
             rel: inputs.iter_relative().count(),
             btn: inputs.iter_buttons().count(),
         };
+        let focus = if counts.total_axes() > 0 {
+            Focus::Axes
+        } else {
+            Focus::Buttons
+        };
         Ok(Self {
             device_stream,
             inputs,
-            scroll: ScrollState::new(),
-            last_content_area_height: 40,
             identifier,
             effective_counts: counts,
             counts,
+            focus,
+            axis_scroll: 0,
+            button_row_scroll: 0,
             axes_scroll_max: 0,
             abs_max_start: 0,
             rel_max_start: 0,
-            buttons_max_start: 0,
-            last_overflow: false,
-            scroll_seeded: false,
+            button_row_max_start: 0,
+            axes_box_present: false,
+            buttons_box_present: false,
+            axes_overflow: false,
+            buttons_overflow: false,
         })
     }
 
@@ -278,16 +159,11 @@ impl DeviceMonitor {
                                 Command::Quit => return Ok(()),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
                                 Command::Scroll(dir) => monitor.scroll_by(dir),
-                                Command::Page(dir) => {
-                                    let counts = monitor.effective_counts;
-                                    let axes_max = monitor.axes_scroll_max;
-                                    let buttons_max = monitor.buttons_max_start;
-                                    monitor
-                                        .scroll
-                                        .scroll_page(&counts, axes_max, buttons_max, dir);
-                                }
-                                Command::Home => monitor.scroll.offset = 0,
-                                Command::End => monitor.scroll_to_end(),
+                                Command::Page(dir) => monitor.scroll_page(dir),
+                                Command::Home => monitor.scroll_home(),
+                                Command::End => monitor.scroll_end(),
+                                Command::FocusNext => monitor.focus_next(),
+                                Command::FocusPrev => monitor.focus_prev(),
                                 Command::None => {}
                             }
                         }
@@ -310,30 +186,90 @@ impl DeviceMonitor {
     }
 
     fn scroll_by(&mut self, direction: i32) {
-        if direction == 0 || !self.has_overflow() {
+        if direction == 0 {
             return;
         }
-        let counts = self.effective_counts;
-        let axes_max = self.axes_scroll_max;
-        let buttons_max = self.buttons_max_start;
-        if direction < 0 {
-            self.scroll.scroll_up(&counts, axes_max, buttons_max);
-        } else {
-            self.scroll.scroll_down(&counts, axes_max, buttons_max);
+        match self.focus {
+            Focus::Axes => self.scroll_axes(direction),
+            Focus::Buttons => self.scroll_buttons(direction),
         }
     }
 
-    fn scroll_to_end(&mut self) {
-        if !self.has_overflow() {
-            self.scroll.offset = 0;
+    fn scroll_page(&mut self, direction: i32) {
+        if direction == 0 {
             return;
         }
-        if self.effective_counts.btn == 0 {
-            self.scroll.offset = self.axes_scroll_max;
-        } else {
-            self.scroll.offset = self.effective_counts.max_offset();
-            self.scroll
-                .align_for_buttons(self.effective_counts.total_axes());
+        for _ in 0..config::PAGE_SCROLL_STEPS {
+            self.scroll_by(direction);
+        }
+    }
+
+    fn scroll_home(&mut self) {
+        match self.focus {
+            Focus::Axes => self.axis_scroll = 0,
+            Focus::Buttons => self.button_row_scroll = 0,
+        }
+    }
+
+    fn scroll_end(&mut self) {
+        match self.focus {
+            Focus::Axes => self.axis_scroll = self.axes_scroll_max,
+            Focus::Buttons => self.button_row_scroll = self.button_row_max_start,
+        }
+    }
+
+    fn focus_next(&mut self) {
+        if self.focusable() {
+            self.focus = match self.focus {
+                Focus::Axes => Focus::Buttons,
+                Focus::Buttons => Focus::Axes,
+            };
+        }
+    }
+
+    fn focus_prev(&mut self) {
+        self.focus_next();
+    }
+
+    fn focusable(&self) -> bool {
+        self.axes_box_present && self.buttons_box_present
+    }
+
+    fn focus_label(&self) -> &'static str {
+        match self.focus {
+            Focus::Axes => "axes",
+            Focus::Buttons => "buttons",
+        }
+    }
+
+    fn sync_focus(&mut self) {
+        self.focus = match (self.axes_box_present, self.buttons_box_present) {
+            (true, true) => self.focus,
+            (true, false) => Focus::Axes,
+            (false, true) => Focus::Buttons,
+            (false, false) => self.focus,
+        };
+    }
+
+    fn scroll_axes(&mut self, direction: i32) {
+        if !self.axes_overflow {
+            return;
+        }
+        if direction < 0 {
+            self.axis_scroll = self.axis_scroll.saturating_sub(1);
+        } else if direction > 0 {
+            self.axis_scroll = (self.axis_scroll + 1).min(self.axes_scroll_max);
+        }
+    }
+
+    fn scroll_buttons(&mut self, direction: i32) {
+        if !self.buttons_overflow {
+            return;
+        }
+        if direction < 0 {
+            self.button_row_scroll = self.button_row_scroll.saturating_sub(1);
+        } else if direction > 0 {
+            self.button_row_scroll = (self.button_row_scroll + 1).min(self.button_row_max_start);
         }
     }
 
@@ -345,7 +281,6 @@ impl DeviceMonitor {
             .alignment(Alignment::Center)
             .render(header, buf);
 
-        self.last_content_area_height = content.height;
         let overflow = self.render_content(content, buf);
 
         let footer_text = self.build_footer_text(&self.effective_counts, overflow);
@@ -357,41 +292,56 @@ impl DeviceMonitor {
     }
 
     fn render_content(&mut self, area: Rect, buf: &mut Buffer) -> bool {
-        let counts = &self.counts;
+        let counts = self.counts;
+        let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
-        let buttons_width_ok = button_width > config::BTN_COL_GAP;
-        let btn_rows = if buttons_width_ok {
-            counts.btn_rows()
-        } else {
-            0
-        };
-        // Derive what is actually renderable for axes in this layout pass
-        let sizer = SectionSizer::new(area, btn_rows, counts.abs, counts.rel);
+        let axes_present = counts.total_axes() > 0 && area.width >= config::AXIS_MIN_WIDTH;
+        let buttons_present = counts.btn > 0 && button_width > min_button_gap;
+        let layout = box_layout(area, axes_present, buttons_present);
+        let axes_box = layout.axes_box;
+        let buttons_box = layout.buttons_box;
 
-        let abs_visible = Self::axes_renderable(sizer.abs_area, counts.abs);
-        let rel_visible = Self::axes_renderable(sizer.rel_area, counts.rel);
-        let button_rows_capacity = if counts.btn == 0 {
-            0
+        self.axes_box_present = axes_box.is_some();
+        self.buttons_box_present = buttons_box.is_some();
+        self.sync_focus();
+
+        let axes_area = axes_box.map(|box_area| {
+            self.render_box(box_area, matches!(self.focus, Focus::Axes), " Axes ", buf)
+        });
+        let buttons_area = buttons_box.map(|box_area| {
+            self.render_box(
+                box_area,
+                matches!(self.focus, Focus::Buttons),
+                " Buttons ",
+                buf,
+            )
+        });
+
+        let axes_sections = axes_area.map(|inner| axes_layout(inner, counts.abs, counts.rel));
+        let (abs_area, rel_area) = if let Some(sections) = axes_sections {
+            (sections.abs_area, sections.rel_area)
         } else {
-            sizer
-                .btn_area
-                .map(|btn_area| self.buttons_visible_rows(btn_area))
-                .unwrap_or(0)
+            (None, None)
+        };
+
+        let abs_visible_capacity = abs_area
+            .map(|a| AxisRenderer::capacity_for(a, counts.abs))
+            .unwrap_or(0);
+        let rel_visible_capacity = rel_area
+            .map(|a| AxisRenderer::capacity_for(a, counts.rel))
+            .unwrap_or(0);
+
+        let abs_visible = abs_visible_capacity > 0;
+        let rel_visible = rel_visible_capacity > 0;
+
+        let button_rows_capacity = if let Some(btn_area) = buttons_area {
+            self.buttons_visible_rows(btn_area)
+        } else {
+            0
         };
         let buttons_visible = button_rows_capacity > 0;
 
         self.effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
-
-        let total_axes = self.effective_counts.total_axes();
-
-        let abs_visible_capacity = sizer
-            .abs_area
-            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.abs))
-            .unwrap_or(0);
-        let rel_visible_capacity = sizer
-            .rel_area
-            .map(|a| AxisRenderer::capacity_for(a, self.effective_counts.rel))
-            .unwrap_or(0);
 
         self.abs_max_start =
             Self::aligned_window_start(self.effective_counts.abs, abs_visible_capacity, 1);
@@ -399,60 +349,67 @@ impl DeviceMonitor {
             Self::aligned_window_start(self.effective_counts.rel, rel_visible_capacity, 1);
         self.axes_scroll_max = self.abs_max_start + self.rel_max_start;
 
-        // Compute buttons window capacity and last valid buttons start, row-aligned.
-        self.buttons_max_start = if button_rows_capacity == 0 {
-            total_axes
-        } else {
-            let total_button_rows = self.effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
-            let max_row_start = total_button_rows.saturating_sub(button_rows_capacity);
-            total_axes + (max_row_start * config::BUTTONS_PER_ROW)
-        };
-
-        // If everything fits, anchor to top; otherwise clamp within range and
-        // align to button-row starts when in button region.
-        let has_overflow = self.overflow_from_capacity(
-            abs_visible_capacity,
-            rel_visible_capacity,
-            button_rows_capacity,
-        );
-        self.last_overflow = has_overflow;
-        if !has_overflow {
-            self.scroll.offset = 0;
-            self.scroll_seeded = false;
-        } else {
-            if !self.scroll_seeded
-                && self.axes_scroll_max == 0
-                && button_rows_capacity * config::BUTTONS_PER_ROW < self.effective_counts.btn
-            {
-                self.scroll.offset = total_axes;
-                self.scroll_seeded = true;
-            }
-            self.scroll.clamp_and_align(
-                &self.effective_counts,
-                self.axes_scroll_max,
-                self.buttons_max_start,
-            );
+        if abs_visible_capacity + rel_visible_capacity == 0 {
+            self.axis_scroll = 0;
         }
+        self.axis_scroll = self.axis_scroll.min(self.axes_scroll_max);
+
+        self.axes_overflow = (abs_visible_capacity + rel_visible_capacity) > 0
+            && (self.effective_counts.abs > abs_visible_capacity
+                || self.effective_counts.rel > rel_visible_capacity);
+
+        let total_button_rows = self.effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
+        self.button_row_max_start = if button_rows_capacity == 0 {
+            0
+        } else {
+            total_button_rows.saturating_sub(button_rows_capacity)
+        };
+        if button_rows_capacity == 0 {
+            self.button_row_scroll = 0;
+        }
+        self.button_row_scroll = self.button_row_scroll.min(self.button_row_max_start);
+
+        self.buttons_overflow =
+            button_rows_capacity > 0 && total_button_rows > button_rows_capacity;
 
         let abs_inputs: InputsVec = self.inputs.iter_absolute().collect();
         let rel_inputs: InputsVec = self.inputs.iter_relative().collect();
         let btn_inputs: InputsVec = self.inputs.iter_buttons().collect();
 
         let (abs_off, rel_off) = self.axis_offsets();
-        if let Some(abs_area) = sizer.abs_area {
+        if let Some(abs_area) = abs_area {
             AxisRenderer::render_axes_with_scroll(&abs_inputs, abs_area, abs_off, buf);
         }
 
-        if let Some(rel_area) = sizer.rel_area {
+        if let Some(rel_area) = rel_area {
             AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
         }
 
-        if let Some(btn_area) = sizer.btn_area {
-            let row_offset = self.scroll.button_row_offset(total_axes);
-            ButtonGrid::render_with_scroll(&btn_inputs, btn_area, row_offset, buf);
+        if let Some(btn_area) = buttons_area {
+            ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
         }
 
-        has_overflow
+        self.has_overflow()
+    }
+
+    fn render_box(&self, area: Rect, focused: bool, title: &str, buf: &mut Buffer) -> Rect {
+        if area.height >= 2 && area.width >= 2 {
+            let style = if focused {
+                config::style_box_focused()
+            } else {
+                config::style_box_unfocused()
+            };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title)
+                .title_alignment(Alignment::Center)
+                .border_style(style);
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        }
     }
 
     fn handle_event(&mut self, key_event: KeyEvent) -> Command {
@@ -467,6 +424,8 @@ impl DeviceMonitor {
             KeyCode::End | KeyCode::Char('G') => Command::End,
             KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
+            KeyCode::Char('J') => Command::FocusNext,
+            KeyCode::Char('K') => Command::FocusPrev,
             KeyCode::PageUp => Command::Page(-1),
             KeyCode::PageDown => Command::Page(1),
             _ => Command::None,
@@ -474,13 +433,12 @@ impl DeviceMonitor {
     }
 
     fn has_overflow(&self) -> bool {
-        self.last_overflow
+        self.axes_overflow || self.buttons_overflow
     }
 
     fn axis_offsets(&self) -> (usize, usize) {
         axis_offsets_for(
-            self.scroll.offset,
-            self.effective_counts.total_axes(),
+            self.axis_scroll,
             self.effective_counts.abs,
             self.effective_counts.rel,
             self.abs_max_start,
@@ -490,51 +448,37 @@ impl DeviceMonitor {
 
     fn build_footer_text(&self, counts: &Counts, overflow: bool) -> String {
         let has_relative = counts.rel > 0;
+        let mut text = String::from("Ctrl-C: back");
+        if has_relative {
+            if overflow {
+                text.push_str(" | 'r': reset");
+            } else {
+                text.push_str(" | 'r': reset relative axes");
+            }
+        }
+        if overflow {
+            text.push_str(" | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump");
+        }
+        if self.focusable() {
+            text.push_str(" | Shift+J/K: focus | Focus: ");
+            text.push_str(self.focus_label());
+        }
         if overflow {
             let total_items = counts.abs + counts.rel + counts.btn;
-            let prefix = Self::footer_prefix(has_relative, true);
-            format!(
-                "{} Items: {} | Offset: {}",
-                prefix, total_items, self.scroll.offset
-            )
-        } else {
-            Self::footer_prefix(has_relative, false).to_string()
-        }
-    }
-
-    fn overflow_from_capacity(
-        &self,
-        abs_capacity: usize,
-        rel_capacity: usize,
-        button_rows_capacity: usize,
-    ) -> bool {
-        abs_capacity < self.effective_counts.abs
-            || rel_capacity < self.effective_counts.rel
-            || button_rows_capacity * config::BUTTONS_PER_ROW < self.effective_counts.btn
-    }
-
-    fn footer_prefix(has_relative: bool, overflow: bool) -> &'static str {
-        match (overflow, has_relative) {
-            (true, true) => {
-                "Ctrl-C: back | 'r': reset | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |"
+            text.push_str(" | Items: ");
+            text.push_str(&total_items.to_string());
+            match self.focus {
+                Focus::Axes => {
+                    text.push_str(" | Axes offset: ");
+                    text.push_str(&self.axis_scroll.to_string());
+                }
+                Focus::Buttons => {
+                    text.push_str(" | Button row: ");
+                    text.push_str(&self.button_row_scroll.to_string());
+                }
             }
-            (true, false) => {
-                "Ctrl-C: back | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump |"
-            }
-            (false, true) => "Ctrl-C: back | 'r': reset relative axes",
-            (false, false) => "Ctrl-C: back",
         }
-    }
-
-    fn axes_renderable(area: Option<Rect>, count: usize) -> bool {
-        if count == 0 {
-            return false;
-        }
-        if let Some(a) = area {
-            a.height >= 1 && a.width >= config::AXIS_MIN_WIDTH
-        } else {
-            false
-        }
+        text
     }
 
     fn buttons_visible_rows(&self, btn_area: Rect) -> usize {
@@ -561,45 +505,29 @@ impl DeviceMonitor {
 
 #[cfg(test)]
 mod tests {
-    use crate::device::monitor::{Counts, ScrollState};
-
     use super::axis_offsets_for;
 
     #[test]
     fn axis_offsets_scroll_rel_after_abs() {
-        assert_eq!(axis_offsets_for(6, 20, 10, 10, 6, 6), (6, 0));
-        assert_eq!(axis_offsets_for(7, 20, 10, 10, 6, 6), (6, 1));
-        assert_eq!(axis_offsets_for(12, 20, 10, 10, 6, 6), (6, 6));
+        assert_eq!(axis_offsets_for(6, 10, 10, 6, 6), (6, 0));
+        assert_eq!(axis_offsets_for(7, 10, 10, 6, 6), (6, 1));
+        assert_eq!(axis_offsets_for(12, 10, 10, 6, 6), (6, 6));
     }
 
     #[test]
     fn axis_offsets_clamp_in_buttons_region() {
-        assert_eq!(axis_offsets_for(25, 20, 10, 10, 6, 6), (6, 6));
+        assert_eq!(axis_offsets_for(25, 10, 10, 6, 6), (6, 6));
     }
 
     #[test]
     fn axis_offsets_rel_only() {
-        assert_eq!(axis_offsets_for(1, 5, 0, 5, 0, 2), (0, 1));
-        assert_eq!(axis_offsets_for(4, 5, 0, 5, 0, 2), (0, 2));
+        assert_eq!(axis_offsets_for(1, 0, 5, 0, 2), (0, 1));
+        assert_eq!(axis_offsets_for(4, 0, 5, 0, 2), (0, 2));
     }
 
     #[test]
     fn axis_offsets_abs_present_no_scroll() {
-        assert_eq!(axis_offsets_for(1, 8, 2, 6, 0, 3), (0, 1));
-        assert_eq!(axis_offsets_for(3, 8, 2, 6, 0, 3), (0, 3));
-    }
-
-    #[test]
-    fn scroll_step_jumps_to_next_button_row() {
-        let counts = Counts {
-            abs: 4,
-            rel: 4,
-            btn: 12,
-        };
-        let mut scroll = ScrollState { offset: 6 };
-
-        scroll.scroll_step(&counts, 6, 14, 1);
-
-        assert_eq!(scroll.offset, 14);
+        assert_eq!(axis_offsets_for(1, 2, 6, 0, 3), (0, 1));
+        assert_eq!(axis_offsets_for(3, 2, 6, 0, 3), (0, 3));
     }
 }

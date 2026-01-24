@@ -1,6 +1,7 @@
 // Theme items are consolidated in theme.rs; re-exported for convenience
 pub use crate::device::monitor::theme::{
-    COLOR_BUTTON_PRESSED, style_gauge, style_header, style_label,
+    COLOR_BUTTON_PRESSED, style_box_focused, style_box_unfocused, style_gauge, style_header,
+    style_label,
 };
 
 pub const BUTTONS_PER_ROW: usize = 6;
@@ -11,6 +12,8 @@ pub const BAR_HEIGHTS: [u16; 3] = [5, 3, 1];
 pub const AXIS_LABEL_MAX: u16 = 20; // max chars allocated to axis label
 pub const AXIS_GAP: u16 = 1; // vertical gap between axis bars
 pub const REL_SECTION_GAP: u16 = 1; // spacer before relative section
+pub const AXIS_LEFT_PADDING: u16 = 1; // left padding inside axis box
+pub const AXES_BOX_PERCENT: u16 = 75; // percent of height to allocate to axes when both present
 pub const BTN_SECTION_TOP_PADDING: u16 = 1; // top padding inside button grid area
 pub const BTN_SECTION_VERT_PADDING: u16 = 2; // total vertical padding used for button section sizing
 pub const BTN_COL_GAP: u16 = 1; // column gap inside button grid

@@ -6,5 +6,7 @@ pub(crate) enum Command {
     Page(i32),
     Home,
     End,
+    FocusNext,
+    FocusPrev,
     None,
 }

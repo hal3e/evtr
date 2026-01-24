@@ -35,15 +35,16 @@ impl AxisRenderer {
         ((area.height / item_height) as usize).min(count)
     }
     fn split_label_gauge(area: Rect) -> (Rect, Rect) {
-        let label_width = config::AXIS_LABEL_MAX.min(area.width / 3);
-        let gauge_width = area
-            .width
-            .saturating_sub(label_width + config::LABEL_GAUGE_GAP);
+        let left_pad = config::AXIS_LEFT_PADDING.min(area.width);
+        let padded_width = area.width.saturating_sub(left_pad);
+        let label_width = config::AXIS_LABEL_MAX.min(padded_width / 3);
+        let gauge_width = padded_width.saturating_sub(label_width + config::LABEL_GAUGE_GAP);
+        let padded_area = Rect::new(area.x + left_pad, area.y, padded_width, area.height);
         let [label_area, gauge_area] = Layout::horizontal([
             Constraint::Length(label_width),
             Constraint::Length(gauge_width),
         ])
-        .areas(area);
+        .areas(padded_area);
 
         let label_y = if area.height > 1 {
             label_area.y + (area.height / 2)
