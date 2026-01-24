@@ -15,7 +15,7 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
-    widgets::{Block, Borders, Paragraph, Widget},
+    widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
 };
 use tokio::select;
 
@@ -37,6 +37,8 @@ pub struct DeviceMonitor {
     counts: Counts,
     // Counts adjusted to what is actually renderable in the current layout
     effective_counts: Counts,
+    info_popup: DeviceInfoPopup,
+    info_visible: bool,
     focus: Focus,
     axis_scroll: usize,
     button_row_scroll: usize,
@@ -79,6 +81,33 @@ enum Focus {
     Buttons,
 }
 
+struct DeviceInfoPopup {
+    lines: Vec<String>,
+}
+
+impl DeviceInfoPopup {
+    fn new(
+        driver_version: (u8, u8, u8),
+        input_id: evdev::InputId,
+        phys: Option<&str>,
+    ) -> Self {
+        let (major, minor, patch) = driver_version;
+        let bus = input_id.bus_type().0;
+        let vendor = input_id.vendor();
+        let product = input_id.product();
+        let version = input_id.version();
+        let phys = phys.unwrap_or("n/a");
+        let lines = vec![
+            format!("Input driver version: {major}.{minor}.{patch}"),
+            format!(
+                "Input device ID: bus {bus:#x}, vendor {vendor:#x}, product {product:#x}, version {version:#x}"
+            ),
+            format!("Input device phys: {phys}"),
+        ];
+        Self { lines }
+    }
+}
+
 fn axis_offsets_for(
     axis_scroll: usize,
     abs_count: usize,
@@ -109,6 +138,8 @@ fn axis_offsets_for(
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let inputs = InputCollection::from_device(&device);
+        let info_popup =
+            DeviceInfoPopup::new(device.driver_version(), device.input_id(), device.physical_path());
         let device_stream = device
             .into_event_stream()
             .map_err(|err| Error::evdev(format!("open device stream ({identifier})"), err))?;
@@ -128,6 +159,8 @@ impl DeviceMonitor {
             identifier,
             effective_counts: counts,
             counts,
+            info_popup,
+            info_visible: false,
             focus,
             axis_scroll: 0,
             button_row_scroll: 0,
@@ -164,6 +197,7 @@ impl DeviceMonitor {
                                 Command::End => monitor.scroll_end(),
                                 Command::FocusNext => monitor.focus_next(),
                                 Command::FocusPrev => monitor.focus_prev(),
+                                Command::ToggleInfo => monitor.toggle_info(),
                                 Command::None => {}
                             }
                         }
@@ -231,6 +265,10 @@ impl DeviceMonitor {
         self.focus_next();
     }
 
+    fn toggle_info(&mut self) {
+        self.info_visible = !self.info_visible;
+    }
+
     fn focusable(&self) -> bool {
         self.axes_box_present && self.buttons_box_present
     }
@@ -289,6 +327,8 @@ impl DeviceMonitor {
             .style(config::style_header())
             .alignment(Alignment::Center)
             .render(footer, buf);
+
+        self.render_info_popup(area, buf);
     }
 
     fn render_content(&mut self, area: Rect, buf: &mut Buffer) -> bool {
@@ -412,6 +452,49 @@ impl DeviceMonitor {
         }
     }
 
+    fn render_info_popup(&self, area: Rect, buf: &mut Buffer) {
+        if !self.info_visible {
+            return;
+        }
+
+        let min_width = 20;
+        let min_height = 5;
+        if area.width < min_width || area.height < min_height {
+            return;
+        }
+
+        let max_line = self
+            .info_popup
+            .lines
+            .iter()
+            .map(|line| line.chars().count())
+            .max()
+            .unwrap_or(0) as u16;
+        let desired_width = max_line.saturating_add(2);
+        let desired_height = self.info_popup.lines.len() as u16 + 2;
+        let width = desired_width.min(area.width);
+        let height = desired_height.min(area.height);
+
+        let x = area.x + (area.width.saturating_sub(width)) / 2;
+        let y = area.y + (area.height.saturating_sub(height)) / 2;
+        let popup_area = Rect::new(x, y, width, height);
+
+        let text = self.info_popup.lines.join("\n");
+        Clear.render(popup_area, buf);
+        Paragraph::new(text)
+            .style(config::style_label())
+            .alignment(Alignment::Left)
+            .wrap(Wrap { trim: false })
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title(" Device Info ")
+                    .title_alignment(Alignment::Center)
+                    .border_style(config::style_box_focused()),
+            )
+            .render(popup_area, buf);
+    }
+
     fn handle_event(&mut self, key_event: KeyEvent) -> Command {
         let code = key_event.code;
 
@@ -424,6 +507,7 @@ impl DeviceMonitor {
             KeyCode::End | KeyCode::Char('G') => Command::End,
             KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
+            KeyCode::Char('i') => Command::ToggleInfo,
             KeyCode::Char('J') => Command::FocusNext,
             KeyCode::Char('K') => Command::FocusPrev,
             KeyCode::PageUp => Command::Page(-1),
@@ -448,7 +532,7 @@ impl DeviceMonitor {
 
     fn build_footer_text(&self, counts: &Counts, overflow: bool) -> String {
         let has_relative = counts.rel > 0;
-        let mut text = String::from("Ctrl-C: back");
+        let mut text = String::from("Ctrl-C: back | i: info");
         if has_relative {
             if overflow {
                 text.push_str(" | 'r': reset");
