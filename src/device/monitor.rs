@@ -16,7 +16,7 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
-    widgets::{Block, Borders, Clear, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, Paragraph, Widget, Wrap},
 };
 use tokio::select;
 
@@ -29,8 +29,13 @@ use self::{
 };
 use crate::{
     device::DeviceInfo,
+    device::popup::{Popup, render_popup},
     error::{Error, Result},
 };
+
+const HELP_POPUP_MIN_WIDTH: u16 = 30;
+const HELP_POPUP_MIN_HEIGHT: u16 = 6;
+const HELP_POPUP_MAX_WIDTH: u16 = 80;
 
 pub struct DeviceMonitor {
     device_stream: evdev::EventStream,
@@ -41,6 +46,8 @@ pub struct DeviceMonitor {
     effective_counts: Counts,
     info_popup: DeviceInfoPopup,
     info_visible: bool,
+    help_popup: HelpPopup,
+    help_visible: bool,
     touch: TouchState,
     focus: Focus,
     axis_scroll: usize,
@@ -111,6 +118,26 @@ impl DeviceInfoPopup {
     }
 }
 
+struct HelpPopup {
+    lines: Vec<String>,
+}
+
+impl HelpPopup {
+    fn new() -> Self {
+        Self {
+            lines: vec![
+                "Scroll: Up/Down or j/k, PageUp/PageDown".to_string(),
+                "Jump: Home/End or g/G".to_string(),
+                "Reset: r (relative axes)".to_string(),
+                "Info: i (press i or Esc to close)".to_string(),
+                "Focus: Shift+J/Shift+K (when axes and buttons show)".to_string(),
+                "Exit: Ctrl-C".to_string(),
+                "Help: ? (press ? or Esc to close)".to_string(),
+            ],
+        }
+    }
+}
+
 fn axis_offsets_for(
     axis_scroll: usize,
     abs_count: usize,
@@ -143,6 +170,7 @@ impl DeviceMonitor {
         let inputs = InputCollection::from_device(&device);
         let info_popup =
             DeviceInfoPopup::new(device.driver_version(), device.input_id(), device.physical_path());
+        let help_popup = HelpPopup::new();
         let touch = TouchState::from_device(&device);
         let device_stream = device
             .into_event_stream()
@@ -165,6 +193,8 @@ impl DeviceMonitor {
             counts,
             info_popup,
             info_visible: false,
+            help_popup,
+            help_visible: false,
             touch,
             focus,
             axis_scroll: 0,
@@ -193,6 +223,30 @@ impl DeviceMonitor {
                 event = term_events.next() => {
                     match event {
                         Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                            if monitor.info_visible {
+                                match key.code {
+                                    KeyCode::Esc | KeyCode::Char('i') => monitor.toggle_info(),
+                                    KeyCode::Char('c')
+                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
+                            if monitor.help_visible {
+                                match key.code {
+                                    KeyCode::Esc | KeyCode::Char('?') => monitor.toggle_help(),
+                                    KeyCode::Char('c')
+                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                                    {
+                                        return Ok(());
+                                    }
+                                    _ => {}
+                                }
+                                continue;
+                            }
                             match monitor.handle_event(key) {
                                 Command::Quit => return Ok(()),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
@@ -203,6 +257,7 @@ impl DeviceMonitor {
                                 Command::FocusNext => monitor.focus_next(),
                                 Command::FocusPrev => monitor.focus_prev(),
                                 Command::ToggleInfo => monitor.toggle_info(),
+                                Command::ToggleHelp => monitor.toggle_help(),
                                 Command::None => {}
                             }
                         }
@@ -273,17 +328,20 @@ impl DeviceMonitor {
 
     fn toggle_info(&mut self) {
         self.info_visible = !self.info_visible;
+        if self.info_visible {
+            self.help_visible = false;
+        }
+    }
+
+    fn toggle_help(&mut self) {
+        self.help_visible = !self.help_visible;
+        if self.help_visible {
+            self.info_visible = false;
+        }
     }
 
     fn focusable(&self) -> bool {
         self.axes_box_present && self.buttons_box_present
-    }
-
-    fn focus_label(&self) -> &'static str {
-        match self.focus {
-            Focus::Axes => "axes",
-            Focus::Buttons => "buttons",
-        }
     }
 
     fn sync_focus(&mut self) {
@@ -318,26 +376,20 @@ impl DeviceMonitor {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let [header, content, footer] = main_layout(area);
+        let [header, content] = main_layout(area);
 
         Paragraph::new(self.identifier.as_str())
             .style(config::style_header())
             .alignment(Alignment::Center)
             .render(header, buf);
 
-        let overflow = self.render_content(content, buf);
-
-        let footer_text = self.build_footer_text(&self.effective_counts, overflow);
-
-        Paragraph::new(footer_text)
-            .style(config::style_header())
-            .alignment(Alignment::Center)
-            .render(footer, buf);
+        self.render_content(content, buf);
 
         self.render_info_popup(area, buf);
+        self.render_help_popup(area, buf);
     }
 
-    fn render_content(&mut self, area: Rect, buf: &mut Buffer) -> bool {
+    fn render_content(&mut self, area: Rect, buf: &mut Buffer) {
         let counts = self.counts;
         let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
@@ -450,8 +502,6 @@ impl DeviceMonitor {
         if let Some(btn_area) = buttons_area {
             ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
         }
-
-        self.has_overflow()
     }
 
     fn render_box(&self, area: Rect, focused: bool, title: &str, buf: &mut Buffer) -> Rect {
@@ -494,42 +544,40 @@ impl DeviceMonitor {
             return;
         }
 
-        let min_width = 20;
-        let min_height = 5;
-        if area.width < min_width || area.height < min_height {
+        let popup = Popup {
+            title: " Device Info ",
+            lines: &self.info_popup.lines,
+            min_width: 20,
+            min_height: 5,
+            max_width: None,
+            max_height: None,
+            text_style: config::style_label(),
+            border_style: config::style_box_focused(),
+            text_alignment: Alignment::Left,
+            title_alignment: Alignment::Center,
+            wrap: Wrap { trim: false },
+        };
+        render_popup(area, buf, &popup);
+    }
+
+    fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
+        if !self.help_visible {
             return;
         }
-
-        let max_line = self
-            .info_popup
-            .lines
-            .iter()
-            .map(|line| line.chars().count())
-            .max()
-            .unwrap_or(0) as u16;
-        let desired_width = max_line.saturating_add(2);
-        let desired_height = self.info_popup.lines.len() as u16 + 2;
-        let width = desired_width.min(area.width);
-        let height = desired_height.min(area.height);
-
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let popup_area = Rect::new(x, y, width, height);
-
-        let text = self.info_popup.lines.join("\n");
-        Clear.render(popup_area, buf);
-        Paragraph::new(text)
-            .style(config::style_label())
-            .alignment(Alignment::Left)
-            .wrap(Wrap { trim: false })
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Device Info ")
-                    .title_alignment(Alignment::Center)
-                    .border_style(config::style_box_focused()),
-            )
-            .render(popup_area, buf);
+        let popup = Popup {
+            title: " Help ",
+            lines: &self.help_popup.lines,
+            min_width: HELP_POPUP_MIN_WIDTH,
+            min_height: HELP_POPUP_MIN_HEIGHT,
+            max_width: Some(HELP_POPUP_MAX_WIDTH),
+            max_height: None,
+            text_style: config::style_label(),
+            border_style: config::style_box_focused(),
+            text_alignment: Alignment::Left,
+            title_alignment: Alignment::Center,
+            wrap: Wrap { trim: false },
+        };
+        render_popup(area, buf, &popup);
     }
 
     fn handle_event(&mut self, key_event: KeyEvent) -> Command {
@@ -545,16 +593,13 @@ impl DeviceMonitor {
             KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
             KeyCode::Char('i') => Command::ToggleInfo,
+            KeyCode::Char('?') => Command::ToggleHelp,
             KeyCode::Char('J') => Command::FocusNext,
             KeyCode::Char('K') => Command::FocusPrev,
             KeyCode::PageUp => Command::Page(-1),
             KeyCode::PageDown => Command::Page(1),
             _ => Command::None,
         }
-    }
-
-    fn has_overflow(&self) -> bool {
-        self.axes_overflow || self.buttons_overflow
     }
 
     fn axis_offsets(&self) -> (usize, usize) {
@@ -565,41 +610,6 @@ impl DeviceMonitor {
             self.abs_max_start,
             self.rel_max_start,
         )
-    }
-
-    fn build_footer_text(&self, counts: &Counts, overflow: bool) -> String {
-        let has_relative = counts.rel > 0;
-        let mut text = String::from("Ctrl-C: back | i: info");
-        if has_relative {
-            if overflow {
-                text.push_str(" | 'r': reset");
-            } else {
-                text.push_str(" | 'r': reset relative axes");
-            }
-        }
-        if overflow {
-            text.push_str(" | ↑/↓ or j/k: scroll | PgUp/PgDn: fast | Home/End or g/G: jump");
-        }
-        if self.focusable() {
-            text.push_str(" | Shift+J/K: focus | Focus: ");
-            text.push_str(self.focus_label());
-        }
-        if overflow {
-            let total_items = counts.abs + counts.rel + counts.btn;
-            text.push_str(" | Items: ");
-            text.push_str(&total_items.to_string());
-            match self.focus {
-                Focus::Axes => {
-                    text.push_str(" | Axes offset: ");
-                    text.push_str(&self.axis_scroll.to_string());
-                }
-                Focus::Buttons => {
-                    text.push_str(" | Button row: ");
-                    text.push_str(&self.button_row_scroll.to_string());
-                }
-            }
-        }
-        text
     }
 
     fn buttons_visible_rows(&self, btn_area: Rect) -> usize {

@@ -9,5 +9,6 @@ pub(crate) enum Command {
     FocusNext,
     FocusPrev,
     ToggleInfo,
+    ToggleHelp,
     None,
 }

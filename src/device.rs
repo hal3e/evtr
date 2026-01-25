@@ -1,4 +1,5 @@
 mod monitor;
+mod popup;
 mod selector;
 
 pub use monitor::DeviceMonitor;

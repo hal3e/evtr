@@ -9,9 +9,10 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Style, Stylize, palette::tailwind},
-    widgets::{Block, Borders, Clear, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
+use crate::device::popup::{Popup, render_popup};
 use crate::error::{Error, Result};
 
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
@@ -21,12 +22,13 @@ const LAYOUT_CONTENT_WIDTH_PCT: u16 = 60;
 const TOP_PADDING_HEIGHT: u16 = 1;
 const SEARCH_BOX_HEIGHT: u16 = 3;
 const MAIN_MIN_HEIGHT: u16 = 3;
-const LIST_MIN_HEIGHT: u16 = 1;
-const FOOTER_HEIGHT: u16 = 1;
 const POPUP_MIN_WIDTH: u16 = 10;
 const POPUP_MIN_HEIGHT: u16 = 3;
 const POPUP_MAX_WIDTH: u16 = 80;
 const POPUP_MAX_HEIGHT: u16 = 5;
+const HELP_POPUP_MIN_WIDTH: u16 = 30;
+const HELP_POPUP_MIN_HEIGHT: u16 = 6;
+const HELP_POPUP_MAX_WIDTH: u16 = 80;
 
 #[derive(Debug)]
 pub struct DeviceInfo {
@@ -41,6 +43,8 @@ pub struct DeviceSelector {
     search_query: String,
     matcher: SkimMatcherV2,
     error_message: Option<String>,
+    help_visible: bool,
+    help_lines: Vec<String>,
 }
 
 impl DeviceSelector {
@@ -56,6 +60,8 @@ impl DeviceSelector {
             search_query: String::new(),
             matcher: SkimMatcherV2::default(),
             error_message,
+            help_visible: false,
+            help_lines: Self::help_lines(),
         })
     }
 
@@ -107,10 +113,27 @@ impl DeviceSelector {
 
             match term_events.next().await {
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                    if selector.help_visible {
+                        match key.code {
+                            KeyCode::Esc | KeyCode::Char('?') => {
+                                selector.help_visible = false;
+                            }
+                            KeyCode::Char('c')
+                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
+                            {
+                                return Ok(None);
+                            }
+                            _ => {}
+                        }
+                        continue;
+                    }
                     if selector.error_message.is_some() {
                         selector.error_message = None;
                     }
                     match key.code {
+                        KeyCode::Char('?') => {
+                            selector.toggle_help();
+                        }
                         KeyCode::Enter if !selector.filtered_indexes.is_empty() => {
                             if let Some(&index) = selector
                                 .filtered_indexes
@@ -255,6 +278,21 @@ impl DeviceSelector {
         self.update_filter();
     }
 
+    fn help_lines() -> Vec<String> {
+        vec![
+            "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End".to_string(),
+            "Select: Enter".to_string(),
+            "Exit: Esc or Ctrl-C".to_string(),
+            "Search: type to filter, Backspace, Ctrl-U clear".to_string(),
+            "Refresh: Ctrl-R".to_string(),
+            "Help: ? (press ? or Esc to close)".to_string(),
+        ]
+    }
+
+    fn toggle_help(&mut self) {
+        self.help_visible = !self.help_visible;
+    }
+
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
         use Constraint::{Length, Min, Percentage};
 
@@ -266,19 +304,16 @@ impl DeviceSelector {
         .areas(area);
 
         // Keep existing top padding and search box, add a one-line footer below the list
-        let [_top_padding, search_area, main_area] = Layout::vertical([
+        let [_top_padding, search_area, list_area] = Layout::vertical([
             Length(TOP_PADDING_HEIGHT),
             Length(SEARCH_BOX_HEIGHT),
             Min(MAIN_MIN_HEIGHT),
         ])
         .areas(content_area);
 
-        let [list_area, footer_area] =
-            Layout::vertical([Min(LIST_MIN_HEIGHT), Length(FOOTER_HEIGHT)]).areas(main_area);
-
         self.render_search_box(search_area, buf);
         self.render_device_list(list_area, buf);
-        self.render_footer(footer_area, buf);
+        self.render_help_popup(area, buf);
         self.render_error_popup(area, buf);
     }
 
@@ -324,50 +359,43 @@ impl DeviceSelector {
         ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
     }
 
-    fn render_footer(&self, area: Rect, buf: &mut Buffer) {
-        if area.height == 0 {
-            return;
-        }
-
-        let total = self.devices.len();
-        let filtered = self.filtered_indexes.len();
-        let footer_text = format!(
-            "Enter: select | Esc: clear/exit | Ctrl-C: quit | ↑/↓/PgUp/PgDn/Home/End: navigate | Ctrl-U: clear | Ctrl-R: refresh | Matches: {}/{}",
-            filtered, total
-        );
-        Paragraph::new(footer_text)
-            .style(Style::new().fg(tailwind::SLATE.c200).bold())
-            .alignment(Alignment::Center)
-            .render(area, buf);
-    }
-
     fn render_error_popup(&self, area: Rect, buf: &mut Buffer) {
         let Some(message) = &self.error_message else {
             return;
         };
+        let popup = Popup {
+            title: " Error ",
+            lines: std::slice::from_ref(message),
+            min_width: POPUP_MIN_WIDTH,
+            min_height: POPUP_MIN_HEIGHT,
+            max_width: Some(POPUP_MAX_WIDTH),
+            max_height: Some(POPUP_MAX_HEIGHT),
+            text_style: Style::new().fg(tailwind::RED.c400).bold(),
+            border_style: Style::new().fg(tailwind::RED.c400).bold(),
+            text_alignment: Alignment::Center,
+            title_alignment: Alignment::Center,
+            wrap: Wrap { trim: true },
+        };
+        render_popup(area, buf, &popup);
+    }
 
-        if area.width < POPUP_MIN_WIDTH || area.height < POPUP_MIN_HEIGHT {
+    fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
+        if !self.help_visible {
             return;
         }
-
-        let width = area.width.min(POPUP_MAX_WIDTH);
-        let height = area.height.clamp(POPUP_MIN_HEIGHT, POPUP_MAX_HEIGHT);
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let popup_area = Rect::new(x, y, width, height);
-
-        Clear.render(popup_area, buf);
-
-        Paragraph::new(message.as_str())
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Error ")
-                    .style(Style::new().fg(tailwind::RED.c400).bold()),
-            )
-            .style(Style::new().fg(tailwind::RED.c400).bold())
-            .alignment(Alignment::Center)
-            .wrap(Wrap { trim: true })
-            .render(popup_area, buf);
+        let popup = Popup {
+            title: " Help ",
+            lines: &self.help_lines,
+            min_width: HELP_POPUP_MIN_WIDTH,
+            min_height: HELP_POPUP_MIN_HEIGHT,
+            max_width: Some(HELP_POPUP_MAX_WIDTH),
+            max_height: None,
+            text_style: Style::new().fg(TEXT_COLOR),
+            border_style: Style::new().fg(tailwind::BLUE.c300).bold(),
+            text_alignment: Alignment::Left,
+            title_alignment: Alignment::Center,
+            wrap: Wrap { trim: false },
+        };
+        render_popup(area, buf, &popup);
     }
 }
