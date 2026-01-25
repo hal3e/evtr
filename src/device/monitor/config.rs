@@ -1,7 +1,7 @@
 // Theme items are consolidated in theme.rs; re-exported for convenience
 pub use crate::device::monitor::theme::{
-    COLOR_BUTTON_PRESSED, style_box_focused, style_box_unfocused, style_gauge, style_header,
-    style_label,
+    COLOR_BUTTON_PRESSED, COLOR_TOUCH_INACTIVE, COLOR_TOUCH_POINT, style_box_focused,
+    style_box_unfocused, style_gauge, style_header, style_label,
 };
 
 pub const BUTTONS_PER_ROW: usize = 6;
@@ -21,5 +21,8 @@ pub const PAGE_SCROLL_STEPS: usize = 10; // page up/down step count
 pub const AXIS_MIN_WIDTH: u16 = 20; // minimum width to render axis/gauge
 pub const LABEL_GAUGE_GAP: u16 = 1; // horizontal gap between label and gauge
 pub const COMPACT_BTN_COL_GAP: u16 = 1;
+pub const TOUCHPAD_MIN_WIDTH: u16 = 20; // minimum width to render touchpad widget
+pub const TOUCHPAD_MIN_HEIGHT: u16 = 4; // minimum height to render touchpad widget
+pub const TOUCHPAD_HEIGHT: u16 = 7; // preferred height for touchpad box
 
 // All style/color definitions live in theme.rs

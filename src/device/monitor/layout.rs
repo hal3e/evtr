@@ -13,6 +13,7 @@ pub(crate) fn main_layout(area: Rect) -> [Rect; 3] {
 
 pub(crate) struct BoxLayout {
     pub(crate) axes_box: Option<Rect>,
+    pub(crate) touch_box: Option<Rect>,
     pub(crate) buttons_box: Option<Rect>,
 }
 
@@ -21,57 +22,94 @@ pub(crate) struct AxesLayout {
     pub(crate) rel_area: Option<Rect>,
 }
 
-pub(crate) fn box_layout(area: Rect, axes_present: bool, buttons_present: bool) -> BoxLayout {
+pub(crate) fn box_layout(
+    area: Rect,
+    axes_present: bool,
+    touch_present: bool,
+    buttons_present: bool,
+) -> BoxLayout {
     let min_axes_box = if axes_present { 2 } else { 0 };
     let min_buttons_box = if buttons_present { 1 } else { 0 };
+    let min_touch_box = if touch_present {
+        config::TOUCHPAD_MIN_HEIGHT + 2
+    } else {
+        0
+    };
 
     let mut axes_height = 0;
+    let mut touch_height = 0;
     let mut buttons_height = 0;
+
+    let mut touch_present = touch_present;
+    if touch_present {
+        let min_other = min_axes_box + min_buttons_box;
+        if min_other == 0 {
+            if area.height < min_touch_box {
+                touch_present = false;
+            } else {
+                touch_height = area.height;
+            }
+        } else if area.height < min_other + min_touch_box {
+            touch_present = false;
+        } else {
+            let preferred_touch = config::TOUCHPAD_HEIGHT + 2;
+            let max_touch = area.height.saturating_sub(min_other);
+            touch_height = preferred_touch.clamp(min_touch_box, max_touch);
+        }
+    }
+
+    let remaining_height = area.height.saturating_sub(touch_height);
 
     match (axes_present, buttons_present) {
         (true, true) => {
-            if area.height < min_axes_box + min_buttons_box {
-                if area.height >= min_buttons_box {
-                    buttons_height = area.height;
+            if remaining_height < min_axes_box + min_buttons_box {
+                if remaining_height >= min_buttons_box {
+                    buttons_height = remaining_height;
                 }
             } else {
-                let desired_axes = (area.height * config::AXES_BOX_PERCENT) / 100;
-                let max_axes = area.height.saturating_sub(min_buttons_box);
+                let desired_axes = (remaining_height * config::AXES_BOX_PERCENT) / 100;
+                let max_axes = remaining_height.saturating_sub(min_buttons_box);
                 axes_height = desired_axes.clamp(min_axes_box, max_axes);
-                buttons_height = area.height.saturating_sub(axes_height);
+                buttons_height = remaining_height.saturating_sub(axes_height);
             }
         }
         (true, false) => {
-            if area.height >= min_axes_box {
-                axes_height = area.height;
+            if remaining_height >= min_axes_box {
+                axes_height = remaining_height;
             }
         }
         (false, true) => {
-            if area.height >= min_buttons_box {
-                buttons_height = area.height;
+            if remaining_height >= min_buttons_box {
+                buttons_height = remaining_height;
             }
         }
         (false, false) => {}
     }
 
+    let mut cursor_y = area.y;
+    let touch_box = if touch_present && touch_height >= min_touch_box && touch_height > 0 {
+        let rect = Rect::new(area.x, cursor_y, area.width, touch_height);
+        cursor_y = cursor_y.saturating_add(touch_height);
+        Some(rect)
+    } else {
+        None
+    };
     let axes_box = if axes_height >= min_axes_box && axes_height > 0 {
-        Some(Rect::new(area.x, area.y, area.width, axes_height))
+        let rect = Rect::new(area.x, cursor_y, area.width, axes_height);
+        cursor_y = cursor_y.saturating_add(axes_height);
+        Some(rect)
     } else {
         None
     };
     let buttons_box = if buttons_height >= min_buttons_box && buttons_height > 0 {
-        Some(Rect::new(
-            area.x,
-            area.y + area.height.saturating_sub(buttons_height),
-            area.width,
-            buttons_height,
-        ))
+        Some(Rect::new(area.x, cursor_y, area.width, buttons_height))
     } else {
         None
     };
 
     BoxLayout {
         axes_box,
+        touch_box,
         buttons_box,
     }
 }

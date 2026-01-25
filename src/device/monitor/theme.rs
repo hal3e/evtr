@@ -21,3 +21,5 @@ pub fn style_box_unfocused() -> Style {
 }
 
 pub const COLOR_BUTTON_PRESSED: Color = tailwind::RED.c400;
+pub const COLOR_TOUCH_POINT: Color = tailwind::RED.c400;
+pub const COLOR_TOUCH_INACTIVE: Color = tailwind::SLATE.c500;

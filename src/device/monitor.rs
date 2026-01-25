@@ -4,6 +4,7 @@ mod layout;
 mod math;
 mod model;
 mod render;
+mod touch;
 mod theme;
 mod ui;
 
@@ -23,7 +24,8 @@ use self::{
     controls::Command,
     layout::{axes_layout, box_layout, main_layout},
     model::{InputCollection, InputsVec},
-    render::{axis::AxisRenderer, buttons::ButtonGrid},
+    render::{axis::AxisRenderer, buttons::ButtonGrid, touch::TouchRenderer},
+    touch::TouchState,
 };
 use crate::{
     device::DeviceInfo,
@@ -39,6 +41,7 @@ pub struct DeviceMonitor {
     effective_counts: Counts,
     info_popup: DeviceInfoPopup,
     info_visible: bool,
+    touch: TouchState,
     focus: Focus,
     axis_scroll: usize,
     button_row_scroll: usize,
@@ -140,6 +143,7 @@ impl DeviceMonitor {
         let inputs = InputCollection::from_device(&device);
         let info_popup =
             DeviceInfoPopup::new(device.driver_version(), device.input_id(), device.physical_path());
+        let touch = TouchState::from_device(&device);
         let device_stream = device
             .into_event_stream()
             .map_err(|err| Error::evdev(format!("open device stream ({identifier})"), err))?;
@@ -161,6 +165,7 @@ impl DeviceMonitor {
             counts,
             info_popup,
             info_visible: false,
+            touch,
             focus,
             axis_scroll: 0,
             button_row_scroll: 0,
@@ -214,6 +219,7 @@ impl DeviceMonitor {
                         )
                     })?;
                     monitor.inputs.handle_event(&event);
+                    monitor.touch.update(&event);
                 }
             }
         }
@@ -336,16 +342,18 @@ impl DeviceMonitor {
         let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
         let axes_present = counts.total_axes() > 0 && area.width >= config::AXIS_MIN_WIDTH;
+        let touch_present = self.touch.enabled() && area.width >= config::TOUCHPAD_MIN_WIDTH;
         let buttons_present = counts.btn > 0 && button_width > min_button_gap;
-        let layout = box_layout(area, axes_present, buttons_present);
+        let layout = box_layout(area, axes_present, touch_present, buttons_present);
         let axes_box = layout.axes_box;
+        let touch_box = layout.touch_box;
         let buttons_box = layout.buttons_box;
 
         self.axes_box_present = axes_box.is_some();
         self.buttons_box_present = buttons_box.is_some();
         self.sync_focus();
 
-        let axes_area = axes_box.map(|box_area| {
+        let axes_inner = axes_box.map(|box_area| {
             self.render_box(box_area, matches!(self.focus, Focus::Axes), " Axes ", buf)
         });
         let buttons_area = buttons_box.map(|box_area| {
@@ -356,8 +364,9 @@ impl DeviceMonitor {
                 buf,
             )
         });
+        let touch_area = touch_box.map(|box_area| self.render_touchpad_box(box_area, buf));
 
-        let axes_sections = axes_area.map(|inner| axes_layout(inner, counts.abs, counts.rel));
+        let axes_sections = axes_inner.map(|inner| axes_layout(inner, counts.abs, counts.rel));
         let (abs_area, rel_area) = if let Some(sections) = axes_sections {
             (sections.abs_area, sections.rel_area)
         } else {
@@ -425,6 +434,19 @@ impl DeviceMonitor {
             AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
         }
 
+        if let Some(touch_area) = touch_area {
+            let active_points = self.touch.active_points();
+            let inactive_points = self.touch.inactive_points();
+            TouchRenderer::render(
+                touch_area,
+                &active_points,
+                &inactive_points,
+                self.touch.x_range(),
+                self.touch.y_range(),
+                buf,
+            );
+        }
+
         if let Some(btn_area) = buttons_area {
             ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
         }
@@ -444,6 +466,21 @@ impl DeviceMonitor {
                 .title(title)
                 .title_alignment(Alignment::Center)
                 .border_style(style);
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        }
+    }
+
+    fn render_touchpad_box(&self, area: Rect, buf: &mut Buffer) -> Rect {
+        if area.height >= 2 && area.width >= 2 {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" Touchpad ")
+                .title_alignment(Alignment::Center)
+                .border_style(config::style_box_unfocused());
             let inner = block.inner(area);
             block.render(area, buf);
             inner
