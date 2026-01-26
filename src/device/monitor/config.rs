@@ -24,5 +24,9 @@ pub const COMPACT_BTN_COL_GAP: u16 = 1;
 pub const TOUCHPAD_MIN_WIDTH: u16 = 20; // minimum width to render touchpad widget
 pub const TOUCHPAD_MIN_HEIGHT: u16 = 4; // minimum height to render touchpad widget
 pub const TOUCHPAD_HEIGHT: u16 = 7; // preferred height for touchpad box
+pub const JOYSTICK_MIN_SIZE: u16 = 6; // minimum size for joystick widget box
+pub const JOYSTICK_MAX_SIZE: u16 = 12; // maximum size for joystick widget box
+pub const JOYSTICK_ASPECT_RATIO: u16 = 2; // width to height ratio for joystick view
+pub const JOYSTICK_GAP: u16 = 2; // horizontal gap between joysticks
 
 // All style/color definitions live in theme.rs

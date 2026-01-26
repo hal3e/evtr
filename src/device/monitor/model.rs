@@ -63,6 +63,13 @@ pub(crate) struct DeviceInput {
     pub(crate) input_type: InputKind,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct AbsoluteAxis {
+    pub(crate) min: i32,
+    pub(crate) max: i32,
+    pub(crate) value: i32,
+}
+
 pub(crate) type InputsVec<'a> = Vec<&'a DeviceInput>;
 pub(crate) type InputSlice<'a> = &'a [&'a DeviceInput];
 
@@ -150,6 +157,23 @@ impl InputCollection {
                 *v = 0;
             }
         }
+    }
+
+    pub(crate) fn absolute_axis(&self, code: AbsoluteAxisCode) -> Option<AbsoluteAxis> {
+        self.inputs
+            .get(&InputId(InputTypeId::Abs, code.0))
+            .and_then(|input| match input.input_type {
+                InputKind::Absolute { min, max, value } => Some(AbsoluteAxis { min, max, value }),
+                _ => None,
+            })
+    }
+
+    pub(crate) fn absolute_axis_pair(
+        &self,
+        x: AbsoluteAxisCode,
+        y: AbsoluteAxisCode,
+    ) -> Option<(AbsoluteAxis, AbsoluteAxis)> {
+        Some((self.absolute_axis(x)?, self.absolute_axis(y)?))
     }
 
     pub(crate) fn iter_absolute(&self) -> impl Iterator<Item = &DeviceInput> {

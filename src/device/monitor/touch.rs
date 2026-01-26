@@ -1,4 +1,4 @@
-use evdev::{AbsoluteAxisCode, Device, EventType, InputEvent};
+use evdev::{AbsoluteAxisCode, Device, EventType, InputEvent, KeyCode, PropType};
 
 #[derive(Clone, Debug, Default)]
 struct TouchSlot {
@@ -8,11 +8,18 @@ struct TouchSlot {
 }
 
 pub(crate) struct TouchState {
-    enabled: bool,
+    mode: TouchMode,
     current_slot: usize,
     slots: Vec<TouchSlot>,
     x_range: (i32, i32),
     y_range: (i32, i32),
+}
+
+#[derive(Clone, Debug)]
+enum TouchMode {
+    None,
+    MultiTouch { has_slot: bool },
+    SingleTouch { has_button: bool },
 }
 
 impl TouchState {
@@ -21,35 +28,60 @@ impl TouchState {
             return Self::disabled();
         };
 
-        let supports_mt_x = axes
-            .iter()
-            .any(|axis| axis == AbsoluteAxisCode::ABS_MT_POSITION_X);
-        let supports_mt_y = axes
-            .iter()
-            .any(|axis| axis == AbsoluteAxisCode::ABS_MT_POSITION_Y);
-        let supports_slot = axes
-            .iter()
-            .any(|axis| axis == AbsoluteAxisCode::ABS_MT_SLOT);
+        let supports_mt_x = axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_X);
+        let supports_mt_y = axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_Y);
+        let supports_slot = axes.contains(AbsoluteAxisCode::ABS_MT_SLOT);
+        let supports_abs_x = axes.contains(AbsoluteAxisCode::ABS_X);
+        let supports_abs_y = axes.contains(AbsoluteAxisCode::ABS_Y);
 
-        if !supports_mt_x || !supports_mt_y {
+        let properties = device.properties();
+        let has_touch_props = properties.contains(PropType::DIRECT)
+            || properties.contains(PropType::BUTTONPAD)
+            || properties.contains(PropType::SEMI_MT)
+            || properties.contains(PropType::TOPBUTTONPAD);
+        let has_touch_keys = device.supported_keys().is_some_and(|keys| {
+            keys.contains(KeyCode::BTN_TOUCH) || keys.contains(KeyCode::BTN_TOOL_FINGER)
+        });
+
+        let mode = if supports_mt_x && supports_mt_y {
+            TouchMode::MultiTouch {
+                has_slot: supports_slot,
+            }
+        } else if supports_abs_x && supports_abs_y && (has_touch_props || has_touch_keys) {
+            TouchMode::SingleTouch {
+                has_button: has_touch_keys,
+            }
+        } else {
+            TouchMode::None
+        };
+
+        if matches!(mode, TouchMode::None) {
             return Self::disabled();
         }
 
         let mut x_range = None;
         let mut y_range = None;
         let mut slot_max = None;
+        let (x_axis, y_axis) = match mode {
+            TouchMode::MultiTouch { .. } => (
+                AbsoluteAxisCode::ABS_MT_POSITION_X,
+                AbsoluteAxisCode::ABS_MT_POSITION_Y,
+            ),
+            TouchMode::SingleTouch { .. } => (AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y),
+            TouchMode::None => return Self::disabled(),
+        };
 
         if let Ok(absinfo) = device.get_absinfo() {
             for (axis, info) in absinfo {
                 match axis {
-                    AbsoluteAxisCode::ABS_MT_POSITION_X => {
+                    axis if axis == x_axis => {
                         x_range = Some((info.minimum(), info.maximum()));
                     }
-                    AbsoluteAxisCode::ABS_MT_POSITION_Y => {
+                    axis if axis == y_axis => {
                         y_range = Some((info.minimum(), info.maximum()));
                     }
                     AbsoluteAxisCode::ABS_MT_SLOT => {
-                        if supports_slot {
+                        if matches!(mode, TouchMode::MultiTouch { has_slot: true }) {
                             slot_max = Some(info.maximum());
                         }
                     }
@@ -58,20 +90,23 @@ impl TouchState {
             }
         }
 
-        if (x_range.is_none() || y_range.is_none() || (slot_max.is_none() && supports_slot))
+        if (x_range.is_none()
+            || y_range.is_none()
+            || (slot_max.is_none() && matches!(mode, TouchMode::MultiTouch { has_slot: true })))
             && let Ok(abs_state) = device.get_abs_state()
         {
             if x_range.is_none()
-                && let Some(info) = abs_state.get(AbsoluteAxisCode::ABS_MT_POSITION_X.0 as usize)
+                && let Some(info) = abs_state.get(x_axis.0 as usize)
             {
                 x_range = Some((info.minimum, info.maximum));
             }
             if y_range.is_none()
-                && let Some(info) = abs_state.get(AbsoluteAxisCode::ABS_MT_POSITION_Y.0 as usize)
+                && let Some(info) = abs_state.get(y_axis.0 as usize)
             {
                 y_range = Some((info.minimum, info.maximum));
             }
-            if slot_max.is_none() && supports_slot
+            if slot_max.is_none()
+                && matches!(mode, TouchMode::MultiTouch { has_slot: true })
                 && let Some(info) = abs_state.get(AbsoluteAxisCode::ABS_MT_SLOT.0 as usize)
             {
                 slot_max = Some(info.maximum);
@@ -85,16 +120,27 @@ impl TouchState {
             return Self::disabled();
         };
 
-        let slots_len = if supports_slot {
-            slot_max.map(|max| max.max(0) as usize + 1).unwrap_or(1)
-        } else {
-            1
+        let slots_len = match mode {
+            TouchMode::MultiTouch { has_slot } => {
+                if has_slot {
+                    slot_max.map(|max| max.max(0) as usize + 1).unwrap_or(1)
+                } else {
+                    1
+                }
+            }
+            TouchMode::SingleTouch { .. } => 1,
+            TouchMode::None => 0,
         };
 
+        let mut slots = vec![TouchSlot::default(); slots_len];
+        if matches!(mode, TouchMode::SingleTouch { has_button: false }) && !slots.is_empty() {
+            slots[0].tracking_id = Some(0);
+        }
+
         Self {
-            enabled: true,
+            mode,
             current_slot: 0,
-            slots: vec![TouchSlot::default(); slots_len],
+            slots,
             x_range,
             y_range,
         }
@@ -102,7 +148,7 @@ impl TouchState {
 
     fn disabled() -> Self {
         Self {
-            enabled: false,
+            mode: TouchMode::None,
             current_slot: 0,
             slots: Vec::new(),
             x_range: (0, 1),
@@ -111,7 +157,11 @@ impl TouchState {
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        self.enabled
+        !matches!(self.mode, TouchMode::None)
+    }
+
+    pub(crate) fn is_touch_device(&self) -> bool {
+        self.enabled()
     }
 
     pub(crate) fn x_range(&self) -> (i32, i32) {
@@ -123,7 +173,7 @@ impl TouchState {
     }
 
     pub(crate) fn active_points(&self) -> Vec<(i32, i32)> {
-        if !self.enabled {
+        if !self.enabled() {
             return Vec::new();
         }
         self.slots
@@ -136,7 +186,7 @@ impl TouchState {
     }
 
     pub(crate) fn inactive_points(&self) -> Vec<(i32, i32)> {
-        if !self.enabled {
+        if !self.enabled() {
             return Vec::new();
         }
         self.slots
@@ -149,36 +199,69 @@ impl TouchState {
     }
 
     pub(crate) fn update(&mut self, event: &InputEvent) {
-        if !self.enabled || event.event_type() != EventType::ABSOLUTE {
+        if !self.enabled() {
             return;
         }
 
-        let axis = AbsoluteAxisCode(event.code());
-        let value = event.value();
-        match axis {
-            AbsoluteAxisCode::ABS_MT_SLOT => {
-                if value >= 0 {
-                    self.current_slot = value as usize;
-                    self.ensure_slot();
+        match (&self.mode, event.event_type()) {
+            (TouchMode::MultiTouch { .. }, EventType::ABSOLUTE) => {
+                let axis = AbsoluteAxisCode(event.code());
+                let value = event.value();
+                match axis {
+                    AbsoluteAxisCode::ABS_MT_SLOT => {
+                        if value >= 0 {
+                            self.current_slot = value as usize;
+                            self.ensure_slot();
+                        }
+                    }
+                    AbsoluteAxisCode::ABS_MT_TRACKING_ID => {
+                        self.ensure_slot();
+                        if value < 0 {
+                            self.slots[self.current_slot].tracking_id = None;
+                        } else {
+                            self.slots[self.current_slot].tracking_id = Some(value);
+                            self.slots[self.current_slot].x = None;
+                            self.slots[self.current_slot].y = None;
+                        }
+                    }
+                    AbsoluteAxisCode::ABS_MT_POSITION_X => {
+                        self.ensure_slot();
+                        self.slots[self.current_slot].x = Some(value);
+                    }
+                    AbsoluteAxisCode::ABS_MT_POSITION_Y => {
+                        self.ensure_slot();
+                        self.slots[self.current_slot].y = Some(value);
+                    }
+                    _ => {}
                 }
             }
-            AbsoluteAxisCode::ABS_MT_TRACKING_ID => {
-                self.ensure_slot();
-                if value < 0 {
-                    self.slots[self.current_slot].tracking_id = None;
-                } else {
-                    self.slots[self.current_slot].tracking_id = Some(value);
-                    self.slots[self.current_slot].x = None;
-                    self.slots[self.current_slot].y = None;
+            (TouchMode::SingleTouch { has_button }, EventType::ABSOLUTE) => {
+                let axis = AbsoluteAxisCode(event.code());
+                let value = event.value();
+                match axis {
+                    AbsoluteAxisCode::ABS_X => {
+                        self.slots[0].x = Some(value);
+                    }
+                    AbsoluteAxisCode::ABS_Y => {
+                        self.slots[0].y = Some(value);
+                    }
+                    _ => {}
+                }
+                if !*has_button {
+                    self.slots[0].tracking_id = Some(0);
                 }
             }
-            AbsoluteAxisCode::ABS_MT_POSITION_X => {
-                self.ensure_slot();
-                self.slots[self.current_slot].x = Some(value);
-            }
-            AbsoluteAxisCode::ABS_MT_POSITION_Y => {
-                self.ensure_slot();
-                self.slots[self.current_slot].y = Some(value);
+            (TouchMode::SingleTouch { has_button: true }, EventType::KEY) => {
+                let key = KeyCode(event.code());
+                if matches!(key, KeyCode::BTN_TOUCH | KeyCode::BTN_TOOL_FINGER) {
+                    if event.value() == 0 {
+                        self.slots[0].tracking_id = None;
+                    } else {
+                        self.slots[0].tracking_id = Some(0);
+                        self.slots[0].x = None;
+                        self.slots[0].y = None;
+                    }
+                }
             }
             _ => {}
         }

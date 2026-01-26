@@ -4,13 +4,14 @@ mod layout;
 mod math;
 mod model;
 mod render;
-mod touch;
 mod theme;
+mod touch;
 mod ui;
 
 use crossterm::event::{
     Event, EventStream as TermEventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
+use evdev::AbsoluteAxisCode;
 use futures::StreamExt;
 use ratatui::{
     DefaultTerminal,
@@ -24,12 +25,19 @@ use self::{
     controls::Command,
     layout::{axes_layout, box_layout, main_layout},
     model::{InputCollection, InputsVec},
-    render::{axis::AxisRenderer, buttons::ButtonGrid, touch::TouchRenderer},
+    render::{
+        axis::AxisRenderer,
+        buttons::ButtonGrid,
+        joystick::{JoystickRenderer, JoystickState},
+        touch::TouchRenderer,
+    },
     touch::TouchState,
 };
 use crate::{
-    device::DeviceInfo,
-    device::popup::{Popup, render_popup},
+    device::{
+        DeviceInfo,
+        popup::{Popup, render_popup},
+    },
     error::{Error, Result},
 };
 
@@ -96,11 +104,7 @@ struct DeviceInfoPopup {
 }
 
 impl DeviceInfoPopup {
-    fn new(
-        driver_version: (u8, u8, u8),
-        input_id: evdev::InputId,
-        phys: Option<&str>,
-    ) -> Self {
+    fn new(driver_version: (u8, u8, u8), input_id: evdev::InputId, phys: Option<&str>) -> Self {
         let (major, minor, patch) = driver_version;
         let bus = input_id.bus_type().0;
         let vendor = input_id.vendor();
@@ -168,8 +172,11 @@ fn axis_offsets_for(
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let inputs = InputCollection::from_device(&device);
-        let info_popup =
-            DeviceInfoPopup::new(device.driver_version(), device.input_id(), device.physical_path());
+        let info_popup = DeviceInfoPopup::new(
+            device.driver_version(),
+            device.input_id(),
+            device.physical_path(),
+        );
         let help_popup = HelpPopup::new();
         let touch = TouchState::from_device(&device);
         let device_stream = device
@@ -394,9 +401,29 @@ impl DeviceMonitor {
         let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
         let button_width = area.width / config::BUTTONS_PER_ROW as u16;
         let axes_present = counts.total_axes() > 0 && area.width >= config::AXIS_MIN_WIDTH;
+        let joystick = if self.touch.is_touch_device() {
+            JoystickState::default()
+        } else {
+            JoystickState::from_axes(
+                self.inputs
+                    .absolute_axis_pair(AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y),
+                self.inputs
+                    .absolute_axis_pair(AbsoluteAxisCode::ABS_RX, AbsoluteAxisCode::ABS_RY),
+            )
+        };
+        let joystick_count = joystick.count();
+        let joystick_present = joystick_count > 0;
         let touch_present = self.touch.enabled() && area.width >= config::TOUCHPAD_MIN_WIDTH;
         let buttons_present = counts.btn > 0 && button_width > min_button_gap;
-        let layout = box_layout(area, axes_present, touch_present, buttons_present);
+        let layout = box_layout(
+            area,
+            joystick_present,
+            joystick_count,
+            touch_present,
+            axes_present,
+            buttons_present,
+        );
+        let joystick_box = layout.joystick_box;
         let axes_box = layout.axes_box;
         let touch_box = layout.touch_box;
         let buttons_box = layout.buttons_box;
@@ -408,6 +435,8 @@ impl DeviceMonitor {
         let axes_inner = axes_box.map(|box_area| {
             self.render_box(box_area, matches!(self.focus, Focus::Axes), " Axes ", buf)
         });
+        let joystick_area =
+            joystick_box.map(|box_area| self.render_joystick_box(box_area, joystick_count, buf));
         let buttons_area = buttons_box.map(|box_area| {
             self.render_box(
                 box_area,
@@ -499,6 +528,10 @@ impl DeviceMonitor {
             );
         }
 
+        if let Some(joystick_area) = joystick_area {
+            JoystickRenderer::render(joystick_area, &joystick, buf);
+        }
+
         if let Some(btn_area) = buttons_area {
             ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
         }
@@ -529,6 +562,26 @@ impl DeviceMonitor {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(" Touchpad ")
+                .title_alignment(Alignment::Center)
+                .border_style(config::style_box_unfocused());
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        }
+    }
+
+    fn render_joystick_box(&self, area: Rect, count: usize, buf: &mut Buffer) -> Rect {
+        if area.height >= 2 && area.width >= 2 {
+            let title = if count > 1 {
+                " Joysticks "
+            } else {
+                " Joystick "
+            };
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(title)
                 .title_alignment(Alignment::Center)
                 .border_style(config::style_box_unfocused());
             let inner = block.inner(area);

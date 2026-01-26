@@ -7,6 +7,7 @@ pub(crate) fn main_layout(area: Rect) -> [Rect; 2] {
 }
 
 pub(crate) struct BoxLayout {
+    pub(crate) joystick_box: Option<Rect>,
     pub(crate) axes_box: Option<Rect>,
     pub(crate) touch_box: Option<Rect>,
     pub(crate) buttons_box: Option<Rect>,
@@ -19,8 +20,10 @@ pub(crate) struct AxesLayout {
 
 pub(crate) fn box_layout(
     area: Rect,
-    axes_present: bool,
+    joystick_present: bool,
+    joystick_columns: usize,
     touch_present: bool,
+    axes_present: bool,
     buttons_present: bool,
 ) -> BoxLayout {
     let min_axes_box = if axes_present { 2 } else { 0 };
@@ -30,30 +33,64 @@ pub(crate) fn box_layout(
     } else {
         0
     };
+    let min_joystick_box = if joystick_present {
+        config::JOYSTICK_MIN_SIZE
+    } else {
+        0
+    };
 
     let mut axes_height = 0;
     let mut touch_height = 0;
+    let mut joystick_height = 0;
     let mut buttons_height = 0;
+
+    let mut joystick_present = joystick_present;
+    if joystick_present {
+        let min_other = min_axes_box + min_buttons_box + min_touch_box;
+        if area.height < min_other + min_joystick_box {
+            joystick_present = false;
+        } else {
+            let max_joystick = area.height.saturating_sub(min_other);
+            let columns = joystick_columns.max(1) as u16;
+            let gap = if joystick_columns > 1 {
+                config::JOYSTICK_GAP
+            } else {
+                0
+            };
+            let width_per = area.width.saturating_sub(gap) / columns;
+            if width_per == 0 {
+                joystick_present = false;
+            } else {
+                let max_size = config::JOYSTICK_MAX_SIZE.min(max_joystick);
+                let height_for_width =
+                    width_per.saturating_div(config::JOYSTICK_ASPECT_RATIO.max(1));
+                let preferred = height_for_width.min(max_size);
+                joystick_height = preferred.clamp(min_joystick_box, max_size);
+            }
+        }
+    }
+
+    let remaining_after_joystick = area.height.saturating_sub(joystick_height);
 
     let mut touch_present = touch_present;
     if touch_present {
         let min_other = min_axes_box + min_buttons_box;
         if min_other == 0 {
-            if area.height < min_touch_box {
+            if remaining_after_joystick < min_touch_box {
                 touch_present = false;
             } else {
-                touch_height = area.height;
+                touch_height = remaining_after_joystick;
             }
-        } else if area.height < min_other + min_touch_box {
+        } else if remaining_after_joystick < min_other + min_touch_box {
             touch_present = false;
         } else {
             let preferred_touch = config::TOUCHPAD_HEIGHT + 2;
-            let max_touch = area.height.saturating_sub(min_other);
+            let max_touch = remaining_after_joystick.saturating_sub(min_other);
             touch_height = preferred_touch.clamp(min_touch_box, max_touch);
         }
     }
 
-    let remaining_height = area.height.saturating_sub(touch_height);
+    let remaining_height = area.height.saturating_sub(joystick_height + touch_height);
 
     match (axes_present, buttons_present) {
         (true, true) => {
@@ -82,6 +119,14 @@ pub(crate) fn box_layout(
     }
 
     let mut cursor_y = area.y;
+    let joystick_box =
+        if joystick_present && joystick_height >= min_joystick_box && joystick_height > 0 {
+            let rect = Rect::new(area.x, cursor_y, area.width, joystick_height);
+            cursor_y = cursor_y.saturating_add(joystick_height);
+            Some(rect)
+        } else {
+            None
+        };
     let touch_box = if touch_present && touch_height >= min_touch_box && touch_height > 0 {
         let rect = Rect::new(area.x, cursor_y, area.width, touch_height);
         cursor_y = cursor_y.saturating_add(touch_height);
@@ -103,6 +148,7 @@ pub(crate) fn box_layout(
     };
 
     BoxLayout {
+        joystick_box,
         axes_box,
         touch_box,
         buttons_box,

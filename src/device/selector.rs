@@ -12,8 +12,10 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
-use crate::device::popup::{Popup, render_popup};
-use crate::error::{Error, Result};
+use crate::{
+    device::popup::{Popup, render_popup},
+    error::{Error, Result},
+};
 
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
 const PAGE_SCROLL_SIZE: usize = 10;
@@ -118,9 +120,7 @@ impl DeviceSelector {
                             KeyCode::Esc | KeyCode::Char('?') => {
                                 selector.help_visible = false;
                             }
-                            KeyCode::Char('c')
-                                if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                            {
+                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
                                 return Ok(None);
                             }
                             _ => {}
