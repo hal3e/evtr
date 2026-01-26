@@ -4,7 +4,7 @@ pub use crate::device::monitor::theme::{
     style_box_unfocused, style_gauge, style_header, style_label,
 };
 
-pub const BUTTONS_PER_ROW: usize = 6;
+pub const BUTTONS_PER_ROW: usize = 3;
 pub const BUTTON_HEIGHT: u16 = 3;
 pub const RELATIVE_DISPLAY_RANGE: i32 = 1000; // -500 to +500 range
 pub const DEFAULT_AXIS_RANGE: (i32, i32) = (-32768, 32767);
@@ -34,5 +34,9 @@ pub const HAT_BLOCKS: usize = 4; // blocks per d-pad direction (length)
 pub const HAT_THICKNESS: usize = 2; // blocks across (thickness)
 pub const HAT_PADDING: u16 = 0; // inset inside d-pad canvas
 pub const JOYSTICK_HAT_JOYSTICK_PERCENT: u16 = 70; // width share for joystick when d-pad is present
+pub const MAIN_COLUMN_PERCENT: u16 = 70; // width share for main column when buttons on the right
+pub const MAIN_BUTTONS_GAP: u16 = 2; // horizontal gap between main column and buttons column
+pub const MAIN_COLUMN_MIN_WIDTH: u16 = 30; // minimum width for main column before splitting
+pub const BUTTONS_COLUMN_MIN_WIDTH: u16 = 24; // minimum width for buttons column before splitting
 
 // All style/color definitions live in theme.rs

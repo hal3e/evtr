@@ -23,7 +23,7 @@ use tokio::select;
 
 use self::{
     controls::Command,
-    layout::{axes_layout, box_layout, main_layout},
+    layout::{axes_layout, box_layout, main_layout, split_buttons_column},
     model::{InputCollection, InputsVec},
     render::{
         axis::AxisRenderer,
@@ -36,8 +36,8 @@ use self::{
 };
 use crate::{
     device::{
-        DeviceInfo,
         popup::{Popup, render_popup},
+        selector::DeviceInfo,
     },
     error::{Error, Result},
 };
@@ -400,8 +400,7 @@ impl DeviceMonitor {
     fn render_content(&mut self, area: Rect, buf: &mut Buffer) {
         let counts = self.counts;
         let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
-        let button_width = area.width / config::BUTTONS_PER_ROW as u16;
-        let axes_present = counts.total_axes() > 0 && area.width >= config::AXIS_MIN_WIDTH;
+        let buttons_available = counts.btn > 0;
         let joystick = if self.touch.is_touch_device() {
             JoystickState::default()
         } else {
@@ -422,22 +421,65 @@ impl DeviceMonitor {
         let joystick_count = joystick.count();
         let joystick_present = joystick_count > 0;
         let hat_present = hat_state.is_some();
-        let touch_present = self.touch.enabled() && area.width >= config::TOUCHPAD_MIN_WIDTH;
-        let buttons_present = counts.btn > 0 && button_width > min_button_gap;
-        let layout = box_layout(
+
+        let axes_available = counts.total_axes() > 0;
+        let touch_enabled = self.touch.enabled();
+
+        let mut main_min_width = config::MAIN_COLUMN_MIN_WIDTH;
+        if axes_available {
+            main_min_width = main_min_width.max(config::AXIS_MIN_WIDTH);
+        }
+        if touch_enabled {
+            main_min_width = main_min_width.max(config::TOUCHPAD_MIN_WIDTH);
+        }
+        if joystick_present {
+            main_min_width = main_min_width.max(config::JOYSTICK_MIN_SIZE);
+        }
+        if hat_present {
+            main_min_width = main_min_width.max(config::HAT_MIN_SIZE);
+        }
+
+        let (main_area, buttons_column) = split_buttons_column(
             area,
-            joystick_present,
-            joystick_count,
-            hat_present,
-            touch_present,
-            axes_present,
-            buttons_present,
+            buttons_available,
+            main_min_width,
+            config::BUTTONS_COLUMN_MIN_WIDTH,
+            min_button_gap,
         );
+
+        let axes_present = axes_available && main_area.width >= config::AXIS_MIN_WIDTH;
+        let touch_present = touch_enabled && main_area.width >= config::TOUCHPAD_MIN_WIDTH;
+        let button_width = main_area.width / config::BUTTONS_PER_ROW as u16;
+        let buttons_present = buttons_available && button_width > min_button_gap;
+
+        let (layout, buttons_box) = if let Some(buttons_area) = buttons_column {
+            let layout = box_layout(
+                main_area,
+                joystick_present,
+                joystick_count,
+                hat_present,
+                touch_present,
+                axes_present,
+                false,
+            );
+            (layout, Some(buttons_area))
+        } else {
+            let layout = box_layout(
+                main_area,
+                joystick_present,
+                joystick_count,
+                hat_present,
+                touch_present,
+                axes_present,
+                buttons_present,
+            );
+            let buttons_box = layout.buttons_box;
+            (layout, buttons_box)
+        };
         let joystick_box = layout.joystick_box;
         let hat_box = layout.hat_box;
         let axes_box = layout.axes_box;
         let touch_box = layout.touch_box;
-        let buttons_box = layout.buttons_box;
 
         self.axes_box_present = axes_box.is_some();
         self.buttons_box_present = buttons_box.is_some();

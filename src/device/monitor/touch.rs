@@ -11,6 +11,7 @@ pub(crate) struct TouchState {
     mode: TouchMode,
     current_slot: usize,
     slots: Vec<TouchSlot>,
+    max_slots: usize,
     x_range: (i32, i32),
     y_range: (i32, i32),
 }
@@ -141,6 +142,7 @@ impl TouchState {
             mode,
             current_slot: 0,
             slots,
+            max_slots: slots_len,
             x_range,
             y_range,
         }
@@ -151,6 +153,7 @@ impl TouchState {
             mode: TouchMode::None,
             current_slot: 0,
             slots: Vec::new(),
+            max_slots: 0,
             x_range: (0, 1),
             y_range: (0, 1),
         }
@@ -210,8 +213,11 @@ impl TouchState {
                 match axis {
                     AbsoluteAxisCode::ABS_MT_SLOT => {
                         if value >= 0 {
-                            self.current_slot = value as usize;
-                            self.ensure_slot();
+                            let slot = value as usize;
+                            if slot < self.max_slots {
+                                self.current_slot = slot;
+                                self.ensure_slot();
+                            }
                         }
                     }
                     AbsoluteAxisCode::ABS_MT_TRACKING_ID => {
@@ -268,9 +274,17 @@ impl TouchState {
     }
 
     fn ensure_slot(&mut self) {
+        if self.max_slots == 0 {
+            return;
+        }
+        if self.current_slot >= self.max_slots {
+            self.current_slot = self.max_slots - 1;
+        }
         if self.current_slot >= self.slots.len() {
-            self.slots
-                .resize(self.current_slot + 1, TouchSlot::default());
+            let target = (self.current_slot + 1).min(self.max_slots);
+            if target > self.slots.len() {
+                self.slots.resize(target, TouchSlot::default());
+            }
         }
     }
 }
