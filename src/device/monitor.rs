@@ -28,6 +28,7 @@ use self::{
     render::{
         axis::AxisRenderer,
         buttons::ButtonGrid,
+        hat::{HatRenderer, HatState},
         joystick::{JoystickRenderer, JoystickState},
         touch::TouchRenderer,
     },
@@ -411,19 +412,29 @@ impl DeviceMonitor {
                     .absolute_axis_pair(AbsoluteAxisCode::ABS_RX, AbsoluteAxisCode::ABS_RY),
             )
         };
+        let hat_state = if self.touch.is_touch_device() {
+            None
+        } else {
+            self.inputs
+                .absolute_axis_pair(AbsoluteAxisCode::ABS_HAT0X, AbsoluteAxisCode::ABS_HAT0Y)
+                .map(|(x, y)| HatState::from_axes(x, y))
+        };
         let joystick_count = joystick.count();
         let joystick_present = joystick_count > 0;
+        let hat_present = hat_state.is_some();
         let touch_present = self.touch.enabled() && area.width >= config::TOUCHPAD_MIN_WIDTH;
         let buttons_present = counts.btn > 0 && button_width > min_button_gap;
         let layout = box_layout(
             area,
             joystick_present,
             joystick_count,
+            hat_present,
             touch_present,
             axes_present,
             buttons_present,
         );
         let joystick_box = layout.joystick_box;
+        let hat_box = layout.hat_box;
         let axes_box = layout.axes_box;
         let touch_box = layout.touch_box;
         let buttons_box = layout.buttons_box;
@@ -437,6 +448,7 @@ impl DeviceMonitor {
         });
         let joystick_area =
             joystick_box.map(|box_area| self.render_joystick_box(box_area, joystick_count, buf));
+        let hat_area = hat_box.map(|box_area| self.render_hat_box(box_area, buf));
         let buttons_area = buttons_box.map(|box_area| {
             self.render_box(
                 box_area,
@@ -532,6 +544,10 @@ impl DeviceMonitor {
             JoystickRenderer::render(joystick_area, &joystick, buf);
         }
 
+        if let (Some(hat_area), Some(hat_state)) = (hat_area, hat_state) {
+            HatRenderer::render(hat_area, hat_state, buf);
+        }
+
         if let Some(btn_area) = buttons_area {
             ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
         }
@@ -547,7 +563,7 @@ impl DeviceMonitor {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .title_alignment(Alignment::Center)
+                .title_alignment(Alignment::Left)
                 .border_style(style);
             let inner = block.inner(area);
             block.render(area, buf);
@@ -562,7 +578,7 @@ impl DeviceMonitor {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(" Touchpad ")
-                .title_alignment(Alignment::Center)
+                .title_alignment(Alignment::Left)
                 .border_style(config::style_box_unfocused());
             let inner = block.inner(area);
             block.render(area, buf);
@@ -582,7 +598,22 @@ impl DeviceMonitor {
             let block = Block::default()
                 .borders(Borders::ALL)
                 .title(title)
-                .title_alignment(Alignment::Center)
+                .title_alignment(Alignment::Left)
+                .border_style(config::style_box_unfocused());
+            let inner = block.inner(area);
+            block.render(area, buf);
+            inner
+        } else {
+            area
+        }
+    }
+
+    fn render_hat_box(&self, area: Rect, buf: &mut Buffer) -> Rect {
+        if area.height >= 2 && area.width >= 2 {
+            let block = Block::default()
+                .borders(Borders::ALL)
+                .title(" D-pad ")
+                .title_alignment(Alignment::Left)
                 .border_style(config::style_box_unfocused());
             let inner = block.inner(area);
             block.render(area, buf);

@@ -28,5 +28,11 @@ pub const JOYSTICK_MIN_SIZE: u16 = 6; // minimum size for joystick widget box
 pub const JOYSTICK_MAX_SIZE: u16 = 12; // maximum size for joystick widget box
 pub const JOYSTICK_ASPECT_RATIO: u16 = 2; // width to height ratio for joystick view
 pub const JOYSTICK_GAP: u16 = 2; // horizontal gap between joysticks
+pub const HAT_MIN_SIZE: u16 = 6; // minimum size for d-pad widget box
+pub const HAT_MAX_SIZE: u16 = 10; // maximum size for d-pad widget box
+pub const HAT_BLOCKS: usize = 4; // blocks per d-pad direction (length)
+pub const HAT_THICKNESS: usize = 2; // blocks across (thickness)
+pub const HAT_PADDING: u16 = 0; // inset inside d-pad canvas
+pub const JOYSTICK_HAT_JOYSTICK_PERCENT: u16 = 70; // width share for joystick when d-pad is present
 
 // All style/color definitions live in theme.rs
