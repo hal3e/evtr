@@ -37,7 +37,20 @@ pub(crate) fn render_popup(area: Rect, buf: &mut Buffer, popup: &Popup<'_>) {
         .max()
         .unwrap_or(0) as u16;
     let desired_width = max_line.saturating_add(2).clamp(popup.min_width, max_width);
-    let desired_height = (popup.lines.len() as u16 + 2).clamp(popup.min_height, max_height);
+    let text_width = desired_width.saturating_sub(2).max(1) as usize;
+    let wrapped_lines: usize = popup
+        .lines
+        .iter()
+        .map(|line| {
+            let len = line.chars().count();
+            if len == 0 {
+                1
+            } else {
+                len.div_ceil(text_width)
+            }
+        })
+        .sum();
+    let desired_height = (wrapped_lines as u16 + 2).clamp(popup.min_height, max_height);
 
     let x = area.x + (area.width.saturating_sub(desired_width)) / 2;
     let y = area.y + (area.height.saturating_sub(desired_height)) / 2;

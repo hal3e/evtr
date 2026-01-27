@@ -2,33 +2,73 @@ mod monitor;
 mod popup;
 mod selector;
 
-pub mod evtr {
-    use super::monitor::DeviceMonitor;
-    use super::selector::DeviceSelector;
-    use crate::error::Result;
+use std::mem;
 
-    pub async fn run() -> Result<()> {
-        let mut terminal = ratatui::init();
+use ratatui::DefaultTerminal;
 
-        let result = async {
-            let mut error_msg = None;
-            loop {
-                let Some(device) = DeviceSelector::run(&mut terminal, error_msg.take()).await?
-                else {
-                    break;
-                };
+use crate::error::Result;
+use monitor::DeviceMonitor;
+use selector::DeviceSelector;
 
-                if let Err(err) = DeviceMonitor::run(&mut terminal, device).await {
-                    error_msg = Some(err.to_string());
-                }
-            }
+pub struct Evtr {
+    terminal: DefaultTerminal,
+    state: State,
+}
 
-            Ok(())
+impl Evtr {
+    pub fn new() -> Self {
+        Self {
+            terminal: ratatui::init(),
+            state: State::new(),
         }
-        .await;
+    }
 
+    pub async fn run(mut self) -> Result<()> {
+        loop {
+            self.state = match self.state.take() {
+                State::Exit => break,
+                State::Select { error_message } => {
+                    DeviceSelector::run(&mut self.terminal, error_message).await?
+                }
+                State::Monitor(device) => {
+                    match DeviceMonitor::run(&mut self.terminal, *device).await {
+                        Ok(()) => State::new(),
+                        Err(err) => State::error(err.to_string()),
+                    }
+                }
+            };
+        }
+
+        Ok(())
+    }
+}
+
+impl Drop for Evtr {
+    fn drop(&mut self) {
         ratatui::restore();
+    }
+}
 
-        result
+enum State {
+    Exit,
+    Select { error_message: Option<String> },
+    Monitor(Box<selector::DeviceInfo>),
+}
+
+impl State {
+    fn new() -> Self {
+        Self::Select {
+            error_message: None,
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self::Select {
+            error_message: Some(message.into()),
+        }
+    }
+
+    fn take(&mut self) -> Self {
+        mem::replace(self, Self::new())
     }
 }

@@ -95,8 +95,7 @@ fn base_points(
     let blocks_y = blocks.min(grid_height);
     let thickness_x = thickness.min(grid_width);
     let thickness_y = thickness.min(grid_height);
-    let mut points =
-        Vec::with_capacity(2 * blocks_x * thickness_y + 2 * blocks_y * thickness_x);
+    let mut points = Vec::with_capacity(2 * blocks_x * thickness_y + 2 * blocks_y * thickness_x);
 
     let x_left = edge_indices(grid_width, blocks_x, Edge::Start);
     let x_right = edge_indices(grid_width, blocks_x, Edge::End);

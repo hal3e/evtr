@@ -35,8 +35,7 @@ pub(crate) fn split_buttons_column(
     } else {
         0
     };
-    let (main_width, buttons_width) =
-        ratio_widths(area.width, gap, config::MAIN_COLUMN_PERCENT);
+    let (main_width, buttons_width) = ratio_widths(area.width, gap, config::MAIN_COLUMN_PERCENT);
 
     if main_width < main_min_width || buttons_width < buttons_min_width {
         return (area, None);
@@ -46,7 +45,12 @@ pub(crate) fn split_buttons_column(
     }
 
     let main_area = Rect::new(area.x, area.y, main_width, area.height);
-    let buttons_area = Rect::new(area.x + main_width + gap, area.y, buttons_width, area.height);
+    let buttons_area = Rect::new(
+        area.x + main_width + gap,
+        area.y,
+        buttons_width,
+        area.height,
+    );
     (main_area, Some(buttons_area))
 }
 
@@ -71,11 +75,7 @@ pub(crate) fn box_layout(
     } else {
         0
     };
-    let min_hat_box = if hat_present {
-        config::HAT_MIN_SIZE
-    } else {
-        0
-    };
+    let min_hat_box = if hat_present { config::HAT_MIN_SIZE } else { 0 };
 
     let mut axes_height = 0;
     let mut touch_height = 0;
@@ -98,12 +98,8 @@ pub(crate) fn box_layout(
         };
         let (joystick_width, hat_width) =
             ratio_widths(area.width, gap, config::JOYSTICK_HAT_JOYSTICK_PERCENT);
-        let joystick_fit = joystick_height_for_width(
-            joystick_width,
-            max_top,
-            min_joystick_box,
-            joystick_columns,
-        );
+        let joystick_fit =
+            joystick_height_for_width(joystick_width, max_top, min_joystick_box, joystick_columns);
         let hat_fit = hat_height_for_width(hat_width, max_top, min_hat_box);
         if let (Some(jh), Some(hh)) = (joystick_fit, hat_fit) {
             top_row_height = jh.max(hh);
@@ -305,8 +301,7 @@ fn ratio_widths(width: u16, gap: u16, left_percent: u16) -> (u16, u16) {
         return (0, 0);
     }
     let left_percent = left_percent.clamp(1, 99);
-    let mut left =
-        ((available as u32).saturating_mul(left_percent as u32) / 100) as u16;
+    let mut left = ((available as u32).saturating_mul(left_percent as u32) / 100) as u16;
     left = left.max(1).min(available.saturating_sub(1));
     let right = available.saturating_sub(left);
     (left, right)

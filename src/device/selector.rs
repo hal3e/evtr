@@ -12,6 +12,7 @@ use ratatui::{
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
+use super::State;
 use crate::{
     device::popup::{Popup, render_popup},
     error::{Error, Result},
@@ -27,7 +28,6 @@ const MAIN_MIN_HEIGHT: u16 = 3;
 const POPUP_MIN_WIDTH: u16 = 10;
 const POPUP_MIN_HEIGHT: u16 = 3;
 const POPUP_MAX_WIDTH: u16 = 80;
-const POPUP_MAX_HEIGHT: u16 = 5;
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
@@ -50,12 +50,16 @@ pub struct DeviceSelector {
 }
 
 impl DeviceSelector {
-    fn new(error_message: Option<String>) -> Result<Self> {
-        let devices = Self::load_devices()?;
+    fn new(error_message: Option<String>) -> Self {
+        let devices = Self::load_devices();
+        let mut error_message = error_message;
+        if devices.is_empty() && error_message.is_none() {
+            error_message = Some(Error::NoDevicesFound.to_string());
+        }
 
         let filtered_indexes = (0..devices.len()).collect();
 
-        Ok(Self {
+        Self {
             devices,
             filtered_indexes,
             selected_filtered_index: 0,
@@ -64,10 +68,10 @@ impl DeviceSelector {
             error_message,
             help_visible: false,
             help_lines: Self::help_lines(),
-        })
+        }
     }
 
-    fn load_devices() -> Result<Vec<DeviceInfo>> {
+    fn load_devices() -> Vec<DeviceInfo> {
         let mut devices: Vec<DeviceInfo> = evdev::enumerate()
             .map(|(path, device)| {
                 let name = device.name().unwrap_or("Unknown Device").to_string();
@@ -86,24 +90,24 @@ impl DeviceSelector {
                 .cmp(&b.identifier.to_lowercase())
         });
 
-        if devices.is_empty() {
-            return Err(Error::NoDevicesFound);
-        }
-
-        Ok(devices)
+        devices
     }
 
-    fn refresh_devices(&mut self) -> Result<()> {
-        self.devices = Self::load_devices()?;
+    fn refresh_devices(&mut self) {
+        self.devices = Self::load_devices();
         self.update_filter();
-        Ok(())
+        if self.devices.is_empty() {
+            self.error_message = Some(Error::NoDevicesFound.to_string());
+        } else {
+            self.error_message = None;
+        }
     }
 
     pub async fn run(
         terminal: &mut DefaultTerminal,
         error_message: Option<String>,
-    ) -> Result<Option<DeviceInfo>> {
-        let mut selector = Self::new(error_message)?;
+    ) -> Result<State> {
+        let mut selector = Self::new(error_message);
         let mut term_events = TermEventStream::new();
 
         loop {
@@ -121,7 +125,7 @@ impl DeviceSelector {
                                 selector.help_visible = false;
                             }
                             KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                return Ok(None);
+                                return Ok(State::Exit);
                             }
                             _ => {}
                         }
@@ -134,20 +138,26 @@ impl DeviceSelector {
                         KeyCode::Char('?') => {
                             selector.toggle_help();
                         }
-                        KeyCode::Enter if !selector.filtered_indexes.is_empty() => {
+                        KeyCode::Enter => {
+                            if selector.filtered_indexes.is_empty() {
+                                selector.refresh_devices();
+                                continue;
+                            }
                             if let Some(&index) = selector
                                 .filtered_indexes
                                 .get(selector.selected_filtered_index)
                             {
-                                return Ok(Some(selector.devices.swap_remove(index)));
+                                return Ok(State::Monitor(Box::new(
+                                    selector.devices.swap_remove(index),
+                                )));
                             }
                         }
                         KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Ok(None);
+                            return Ok(State::Exit);
                         }
                         KeyCode::Esc => {
                             if selector.search_query.is_empty() {
-                                return Ok(None);
+                                return Ok(State::Exit);
                             } else {
                                 selector.clear_search();
                             }
@@ -179,9 +189,7 @@ impl DeviceSelector {
                             selector.clear_search();
                         }
                         KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            if let Err(err) = selector.refresh_devices() {
-                                selector.error_message = Some(err.to_string());
-                            }
+                            selector.refresh_devices();
                         }
                         KeyCode::Char(c)
                             if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
@@ -369,7 +377,7 @@ impl DeviceSelector {
             min_width: POPUP_MIN_WIDTH,
             min_height: POPUP_MIN_HEIGHT,
             max_width: Some(POPUP_MAX_WIDTH),
-            max_height: Some(POPUP_MAX_HEIGHT),
+            max_height: None,
             text_style: Style::new().fg(tailwind::RED.c400).bold(),
             border_style: Style::new().fg(tailwind::RED.c400).bold(),
             text_alignment: Alignment::Center,
