@@ -17,10 +17,15 @@ pub(crate) struct HatState {
 }
 
 impl HatState {
-    pub(crate) fn from_axes(x: AbsoluteAxis, y: AbsoluteAxis) -> Self {
+    pub(crate) fn from_axes(x: AbsoluteAxis, y: AbsoluteAxis, invert_y: bool) -> Self {
+        let y = if invert_y {
+            -sign(y.value)
+        } else {
+            sign(y.value)
+        };
         Self {
             x: sign(x.value),
-            y: -sign(y.value),
+            y,
         }
     }
 }

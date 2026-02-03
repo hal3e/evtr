@@ -41,7 +41,7 @@ impl JoystickState {
 pub(crate) struct JoystickRenderer;
 
 impl JoystickRenderer {
-    pub(crate) fn render(area: Rect, state: &JoystickState, buf: &mut Buffer) {
+    pub(crate) fn render(area: Rect, state: &JoystickState, invert_y: bool, buf: &mut Buffer) {
         if area.width < 2 || area.height < 2 {
             return;
         }
@@ -49,17 +49,17 @@ impl JoystickRenderer {
         match (state.left.as_ref(), state.right.as_ref()) {
             (None, None) => {}
             (Some(stick), None) | (None, Some(stick)) => {
-                Self::render_stick(area, stick, buf);
+                Self::render_stick(area, stick, invert_y, buf);
             }
             (Some(left), Some(right)) => {
                 let (left_area, right_area) = split_two(area);
-                Self::render_stick(left_area, left, buf);
-                Self::render_stick(right_area, right, buf);
+                Self::render_stick(left_area, left, invert_y, buf);
+                Self::render_stick(right_area, right, invert_y, buf);
             }
         }
     }
 
-    fn render_stick(area: Rect, stick: &StickState, buf: &mut Buffer) {
+    fn render_stick(area: Rect, stick: &StickState, invert_y: bool, buf: &mut Buffer) {
         let ratio = config::JOYSTICK_ASPECT_RATIO.max(1);
         let max_width = area.width;
         let max_height = area.height;
@@ -75,7 +75,12 @@ impl JoystickRenderer {
 
         let x_norm = normalize_axis(&stick.x);
         let y_norm = normalize_axis(&stick.y);
-        let point = (x_norm * 2.0 - 1.0, 1.0 - (y_norm * 2.0));
+        let y_pos = if invert_y {
+            1.0 - (y_norm * 2.0)
+        } else {
+            y_norm * 2.0 - 1.0
+        };
+        let point = (x_norm * 2.0 - 1.0, y_pos);
 
         Canvas::default()
             .marker(Marker::HalfBlock)

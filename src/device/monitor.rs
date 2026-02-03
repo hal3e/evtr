@@ -71,6 +71,7 @@ pub struct DeviceMonitor {
     buttons_box_present: bool,
     axes_overflow: bool,
     buttons_overflow: bool,
+    joystick_invert_y: bool,
 }
 
 #[derive(Clone, Copy)]
@@ -135,6 +136,7 @@ impl HelpPopup {
                 "Jump: Home/End or g/G".to_string(),
                 "Reset: r (relative axes)".to_string(),
                 "Info: i (press i or Esc to close)".to_string(),
+                "Invert Y: y".to_string(),
                 "Focus: Shift+J/Shift+K (when axes and buttons show)".to_string(),
                 "Exit: Ctrl-C".to_string(),
                 "Help: ? (press ? or Esc to close)".to_string(),
@@ -215,6 +217,7 @@ impl DeviceMonitor {
             buttons_box_present: false,
             axes_overflow: false,
             buttons_overflow: false,
+            joystick_invert_y: true,
         })
     }
 
@@ -266,6 +269,7 @@ impl DeviceMonitor {
                                 Command::FocusPrev => monitor.focus_prev(),
                                 Command::ToggleInfo => monitor.toggle_info(),
                                 Command::ToggleHelp => monitor.toggle_help(),
+                                Command::ToggleInvertY => monitor.toggle_invert_y(),
                                 Command::None => {}
                             }
                         }
@@ -348,6 +352,10 @@ impl DeviceMonitor {
         }
     }
 
+    fn toggle_invert_y(&mut self) {
+        self.joystick_invert_y = !self.joystick_invert_y;
+    }
+
     fn focusable(&self) -> bool {
         self.axes_box_present && self.buttons_box_present
     }
@@ -416,7 +424,7 @@ impl DeviceMonitor {
         } else {
             self.inputs
                 .absolute_axis_pair(AbsoluteAxisCode::ABS_HAT0X, AbsoluteAxisCode::ABS_HAT0Y)
-                .map(|(x, y)| HatState::from_axes(x, y))
+                .map(|(x, y)| HatState::from_axes(x, y, self.joystick_invert_y))
         };
         let joystick_count = joystick.count();
         let joystick_present = joystick_count > 0;
@@ -583,7 +591,7 @@ impl DeviceMonitor {
         }
 
         if let Some(joystick_area) = joystick_area {
-            JoystickRenderer::render(joystick_area, &joystick, buf);
+            JoystickRenderer::render(joystick_area, &joystick, self.joystick_invert_y, buf);
         }
 
         if let (Some(hat_area), Some(hat_state)) = (hat_area, hat_state) {
@@ -719,6 +727,7 @@ impl DeviceMonitor {
             KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
             KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
             KeyCode::Char('i') => Command::ToggleInfo,
+            KeyCode::Char('y') => Command::ToggleInvertY,
             KeyCode::Char('?') => Command::ToggleHelp,
             KeyCode::Char('J') => Command::FocusNext,
             KeyCode::Char('K') => Command::FocusPrev,
