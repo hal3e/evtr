@@ -51,6 +51,53 @@ pub(crate) enum MonitorExit {
     ExitApp,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum InitialStateLoad {
+    Full,
+    Partial { warnings: Vec<String> },
+}
+
+impl InitialStateLoad {
+    fn record_warning(&mut self, warning: impl Into<String>) {
+        match self {
+            InitialStateLoad::Full => {
+                *self = InitialStateLoad::Partial {
+                    warnings: vec![warning.into()],
+                };
+            }
+            InitialStateLoad::Partial { warnings } => warnings.push(warning.into()),
+        }
+    }
+
+    fn merge(self, other: Self) -> Self {
+        let mut warnings = Vec::new();
+        if let InitialStateLoad::Partial {
+            warnings: self_warnings,
+        } = self
+        {
+            warnings.extend(self_warnings);
+        }
+        if let InitialStateLoad::Partial {
+            warnings: other_warnings,
+        } = other
+        {
+            warnings.extend(other_warnings);
+        }
+        if warnings.is_empty() {
+            InitialStateLoad::Full
+        } else {
+            InitialStateLoad::Partial { warnings }
+        }
+    }
+
+    fn warnings(&self) -> &[String] {
+        match self {
+            InitialStateLoad::Full => &[],
+            InitialStateLoad::Partial { warnings } => warnings,
+        }
+    }
+}
+
 pub struct DeviceMonitor {
     device_stream: evdev::EventStream,
     inputs: InputCollection,
@@ -117,20 +164,29 @@ struct DeviceInfoPopup {
 }
 
 impl DeviceInfoPopup {
-    fn new(driver_version: (u8, u8, u8), input_id: evdev::InputId, phys: Option<&str>) -> Self {
+    fn new(
+        driver_version: (u8, u8, u8),
+        input_id: evdev::InputId,
+        phys: Option<&str>,
+        initial_state_load: &InitialStateLoad,
+    ) -> Self {
         let (major, minor, patch) = driver_version;
         let bus = input_id.bus_type().0;
         let vendor = input_id.vendor();
         let product = input_id.product();
         let version = input_id.version();
         let phys = phys.unwrap_or("n/a");
-        let lines = vec![
+        let mut lines = vec![
             format!("Input driver version: {major}.{minor}.{patch}"),
             format!(
                 "Input device ID: bus {bus:#x}, vendor {vendor:#x}, product {product:#x}, version {version:#x}"
             ),
             format!("Input device phys: {phys}"),
         ];
+        for warning in initial_state_load.warnings() {
+            lines.push(format!("Startup warning: {warning}"));
+        }
+
         Self { lines }
     }
 }
@@ -224,14 +280,16 @@ fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
 
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
-        let inputs = InputCollection::from_device(&device);
+        let (inputs, input_load) = InputCollection::from_device(&device);
+        let (touch, touch_load) = TouchState::from_device(&device);
+        let initial_state_load = input_load.merge(touch_load);
         let info_popup = DeviceInfoPopup::new(
             device.driver_version(),
             device.input_id(),
             device.physical_path(),
+            &initial_state_load,
         );
         let help_popup = HelpPopup::new();
-        let touch = TouchState::from_device(&device);
         let device_stream = device
             .into_event_stream()
             .map_err(|err| Error::evdev(format!("open device stream ({identifier})"), err))?;
