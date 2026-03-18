@@ -6,8 +6,8 @@ use std::mem;
 
 use ratatui::DefaultTerminal;
 
-use crate::error::Result;
-use monitor::DeviceMonitor;
+use crate::error::{Error, Result};
+use monitor::{DeviceMonitor, MonitorExit};
 use selector::DeviceSelector;
 
 pub struct Evtr {
@@ -16,11 +16,11 @@ pub struct Evtr {
 }
 
 impl Evtr {
-    pub fn new() -> Self {
-        Self {
-            terminal: ratatui::init(),
+    pub fn new() -> Result<Self> {
+        Ok(Self {
+            terminal: ratatui::try_init().map_err(|err| Error::terminal("init terminal", err))?,
             state: State::new(),
-        }
+        })
     }
 
     pub async fn run(mut self) -> Result<()> {
@@ -32,7 +32,8 @@ impl Evtr {
                 }
                 State::Monitor(device) => {
                     match DeviceMonitor::run(&mut self.terminal, *device).await {
-                        Ok(()) => State::new(),
+                        Ok(MonitorExit::BackToSelector) => State::new(),
+                        Ok(MonitorExit::ExitApp) => State::Exit,
                         Err(err) => State::error(err.to_string()),
                     }
                 }

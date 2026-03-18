@@ -1,6 +1,7 @@
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Command {
-    Quit,
+    BackToSelector,
+    ExitApp,
     Reset,
     Scroll(i32),
     Page(i32),

@@ -46,6 +46,11 @@ const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
 
+pub(crate) enum MonitorExit {
+    BackToSelector,
+    ExitApp,
+}
+
 pub struct DeviceMonitor {
     device_stream: evdev::EventStream,
     inputs: InputCollection,
@@ -54,9 +59,8 @@ pub struct DeviceMonitor {
     // Counts adjusted to what is actually renderable in the current layout
     effective_counts: Counts,
     info_popup: DeviceInfoPopup,
-    info_visible: bool,
     help_popup: HelpPopup,
-    help_visible: bool,
+    active_popup: ActivePopup,
     touch: TouchState,
     focus: Focus,
     axis_scroll: usize,
@@ -101,6 +105,13 @@ enum Focus {
     Buttons,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ActivePopup {
+    None,
+    Info,
+    Help,
+}
+
 struct DeviceInfoPopup {
     lines: Vec<String>,
 }
@@ -138,7 +149,8 @@ impl HelpPopup {
                 "Info: i (press i or Esc to close)".to_string(),
                 "Invert Y: y".to_string(),
                 "Focus: Shift+J/Shift+K (when axes and buttons show)".to_string(),
-                "Exit: Ctrl-C".to_string(),
+                "Back: Esc (when no popup is open)".to_string(),
+                "Exit app: Ctrl-C".to_string(),
                 "Help: ? (press ? or Esc to close)".to_string(),
             ],
         }
@@ -172,6 +184,44 @@ fn axis_offsets_for(
     }
 }
 
+fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
+    match popup {
+        ActivePopup::Info => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('i') => Command::ToggleInfo,
+            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                Command::ExitApp
+            }
+            _ => Command::None,
+        },
+        ActivePopup::Help => match key_event.code {
+            KeyCode::Esc | KeyCode::Char('?') => Command::ToggleHelp,
+            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                Command::ExitApp
+            }
+            _ => Command::None,
+        },
+        ActivePopup::None => match key_event.code {
+            KeyCode::Esc => Command::BackToSelector,
+            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
+                Command::ExitApp
+            }
+            KeyCode::Char('r') => Command::Reset,
+            KeyCode::Home | KeyCode::Char('g') => Command::Home,
+            KeyCode::End | KeyCode::Char('G') => Command::End,
+            KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
+            KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
+            KeyCode::Char('i') => Command::ToggleInfo,
+            KeyCode::Char('y') => Command::ToggleInvertY,
+            KeyCode::Char('?') => Command::ToggleHelp,
+            KeyCode::Char('J') => Command::FocusNext,
+            KeyCode::Char('K') => Command::FocusPrev,
+            KeyCode::PageUp => Command::Page(-1),
+            KeyCode::PageDown => Command::Page(1),
+            _ => Command::None,
+        },
+    }
+}
+
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let inputs = InputCollection::from_device(&device);
@@ -202,9 +252,8 @@ impl DeviceMonitor {
             effective_counts: counts,
             counts,
             info_popup,
-            info_visible: false,
             help_popup,
-            help_visible: false,
+            active_popup: ActivePopup::None,
             touch,
             focus,
             axis_scroll: 0,
@@ -221,7 +270,10 @@ impl DeviceMonitor {
         })
     }
 
-    pub async fn run(terminal: &mut DefaultTerminal, device_info: DeviceInfo) -> Result<()> {
+    pub async fn run(
+        terminal: &mut DefaultTerminal,
+        device_info: DeviceInfo,
+    ) -> Result<MonitorExit> {
         let mut monitor = Self::new(device_info)?;
         let mut term_events = TermEventStream::new();
 
@@ -234,32 +286,11 @@ impl DeviceMonitor {
                 event = term_events.next() => {
                     match event {
                         Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
-                            if monitor.info_visible {
-                                match key.code {
-                                    KeyCode::Esc | KeyCode::Char('i') => monitor.toggle_info(),
-                                    KeyCode::Char('c')
-                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                    {
-                                        return Ok(());
-                                    }
-                                    _ => {}
+                            match command_for(key, monitor.active_popup) {
+                                Command::BackToSelector => {
+                                    return Ok(MonitorExit::BackToSelector);
                                 }
-                                continue;
-                            }
-                            if monitor.help_visible {
-                                match key.code {
-                                    KeyCode::Esc | KeyCode::Char('?') => monitor.toggle_help(),
-                                    KeyCode::Char('c')
-                                        if key.modifiers.contains(KeyModifiers::CONTROL) =>
-                                    {
-                                        return Ok(());
-                                    }
-                                    _ => {}
-                                }
-                                continue;
-                            }
-                            match monitor.handle_event(key) {
-                                Command::Quit => return Ok(()),
+                                Command::ExitApp => return Ok(MonitorExit::ExitApp),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
                                 Command::Scroll(dir) => monitor.scroll_by(dir),
                                 Command::Page(dir) => monitor.scroll_page(dir),
@@ -339,21 +370,17 @@ impl DeviceMonitor {
     }
 
     fn toggle_info(&mut self) {
-        self.info_visible = !self.info_visible;
-        if self.info_visible {
-            self.help_visible = false;
-        }
+        self.active_popup = match self.active_popup {
+            ActivePopup::Info => ActivePopup::None,
+            _ => ActivePopup::Info,
+        };
     }
 
     fn toggle_help(&mut self) {
-        self.help_visible = !self.help_visible;
-        if self.help_visible {
-            self.info_visible = false;
-        }
-    }
-
-    fn toggle_invert_y(&mut self) {
-        self.joystick_invert_y = !self.joystick_invert_y;
+        self.active_popup = match self.active_popup {
+            ActivePopup::Help => ActivePopup::None,
+            _ => ActivePopup::Help,
+        };
     }
 
     fn focusable(&self) -> bool {
@@ -401,8 +428,15 @@ impl DeviceMonitor {
 
         self.render_content(content, buf);
 
-        self.render_info_popup(area, buf);
-        self.render_help_popup(area, buf);
+        match self.active_popup {
+            ActivePopup::None => {}
+            ActivePopup::Info => self.render_info_popup(area, buf),
+            ActivePopup::Help => self.render_help_popup(area, buf),
+        }
+    }
+
+    fn toggle_invert_y(&mut self) {
+        self.joystick_invert_y = !self.joystick_invert_y;
     }
 
     fn render_content(&mut self, area: Rect, buf: &mut Buffer) {
@@ -674,10 +708,6 @@ impl DeviceMonitor {
     }
 
     fn render_info_popup(&self, area: Rect, buf: &mut Buffer) {
-        if !self.info_visible {
-            return;
-        }
-
         let popup = Popup {
             title: " Device Info ",
             lines: &self.info_popup.lines,
@@ -695,9 +725,6 @@ impl DeviceMonitor {
     }
 
     fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
-        if !self.help_visible {
-            return;
-        }
         let popup = Popup {
             title: " Help ",
             lines: &self.help_popup.lines,
@@ -712,29 +739,6 @@ impl DeviceMonitor {
             wrap: Wrap { trim: false },
         };
         render_popup(area, buf, &popup);
-    }
-
-    fn handle_event(&mut self, key_event: KeyEvent) -> Command {
-        let code = key_event.code;
-
-        match code {
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Command::Quit
-            }
-            KeyCode::Char('r') => Command::Reset,
-            KeyCode::Home | KeyCode::Char('g') => Command::Home,
-            KeyCode::End | KeyCode::Char('G') => Command::End,
-            KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
-            KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
-            KeyCode::Char('i') => Command::ToggleInfo,
-            KeyCode::Char('y') => Command::ToggleInvertY,
-            KeyCode::Char('?') => Command::ToggleHelp,
-            KeyCode::Char('J') => Command::FocusNext,
-            KeyCode::Char('K') => Command::FocusPrev,
-            KeyCode::PageUp => Command::Page(-1),
-            KeyCode::PageDown => Command::Page(1),
-            _ => Command::None,
-        }
     }
 
     fn axis_offsets(&self) -> (usize, usize) {
@@ -771,7 +775,18 @@ impl DeviceMonitor {
 
 #[cfg(test)]
 mod tests {
-    use super::axis_offsets_for;
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+    use super::{ActivePopup, axis_offsets_for, command_for};
+    use crate::device::monitor::controls::Command;
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn ctrl_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
 
     #[test]
     fn axis_offsets_scroll_rel_after_abs() {
@@ -795,5 +810,28 @@ mod tests {
     fn axis_offsets_abs_present_no_scroll() {
         assert_eq!(axis_offsets_for(1, 2, 6, 0, 3), (0, 1));
         assert_eq!(axis_offsets_for(3, 2, 6, 0, 3), (0, 3));
+    }
+
+    #[test]
+    fn command_for_ctrl_c_exits_from_any_popup_state() {
+        for popup in [ActivePopup::None, ActivePopup::Info, ActivePopup::Help] {
+            assert_eq!(command_for(ctrl_char('c'), popup), Command::ExitApp);
+        }
+    }
+
+    #[test]
+    fn command_for_escape_backs_out_only_without_popup() {
+        assert_eq!(
+            command_for(key(KeyCode::Esc), ActivePopup::None),
+            Command::BackToSelector
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Esc), ActivePopup::Info),
+            Command::ToggleInfo
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Esc), ActivePopup::Help),
+            Command::ToggleHelp
+        );
     }
 }

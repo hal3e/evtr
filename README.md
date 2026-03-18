@@ -9,7 +9,7 @@
 
 ## 🕹️ Flow
 - Selector: type to filter, use arrows/PgUp/PgDn/Home/End to move, Enter to confirm, Esc to back out
-- Monitor: reset with `r`, jump with `g/G`, scroll with arrows or PgUp/PgDn, quit with Ctrl-C
+- Monitor: reset with `r`, jump with `g/G`, scroll with arrows or PgUp/PgDn, Esc to return to the selector, Ctrl-C to exit the app
 - Layout adapts to terminal size, keeping axes and mapped buttons responsive
 
 ## 🚀 Quick start
