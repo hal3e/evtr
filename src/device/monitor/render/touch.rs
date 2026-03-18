@@ -85,3 +85,25 @@ fn clamp(value: i32, min: i32, max: i32) -> i32 {
         value
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{normalize_points, normalize_range};
+
+    #[test]
+    fn normalize_range_swaps_reversed_bounds() {
+        assert_eq!(normalize_range((10, -5)), (-5, 10));
+    }
+
+    #[test]
+    fn normalize_range_expands_zero_span() {
+        assert_eq!(normalize_range((7, 7)), (7, 8));
+    }
+
+    #[test]
+    fn normalize_points_clamps_and_inverts_y_coordinates() {
+        let normalized = normalize_points(&[(-5, -10), (5, 10), (15, 30)], 0, 10, 0, 20);
+
+        assert_eq!(normalized, vec![(0.0, 20.0), (5.0, 10.0), (10.0, 0.0)]);
+    }
+}

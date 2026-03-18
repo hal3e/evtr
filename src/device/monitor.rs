@@ -278,6 +278,34 @@ fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
     }
 }
 
+fn toggled_popup(current: ActivePopup, target: ActivePopup) -> ActivePopup {
+    if current == target {
+        ActivePopup::None
+    } else {
+        target
+    }
+}
+
+fn next_focus(current: Focus, focusable: bool) -> Focus {
+    if !focusable {
+        return current;
+    }
+
+    match current {
+        Focus::Axes => Focus::Buttons,
+        Focus::Buttons => Focus::Axes,
+    }
+}
+
+fn synced_focus(current: Focus, axes_box_present: bool, buttons_box_present: bool) -> Focus {
+    match (axes_box_present, buttons_box_present) {
+        (true, true) => current,
+        (true, false) => Focus::Axes,
+        (false, true) => Focus::Buttons,
+        (false, false) => current,
+    }
+}
+
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let (inputs, input_load) = InputCollection::from_device(&device);
@@ -431,12 +459,7 @@ impl DeviceMonitor {
     }
 
     fn focus_next(&mut self) {
-        if self.focusable() {
-            self.focus = match self.focus {
-                Focus::Axes => Focus::Buttons,
-                Focus::Buttons => Focus::Axes,
-            };
-        }
+        self.focus = next_focus(self.focus, self.focusable());
     }
 
     fn focus_prev(&mut self) {
@@ -444,17 +467,11 @@ impl DeviceMonitor {
     }
 
     fn toggle_info(&mut self) {
-        self.active_popup = match self.active_popup {
-            ActivePopup::Info => ActivePopup::None,
-            _ => ActivePopup::Info,
-        };
+        self.active_popup = toggled_popup(self.active_popup, ActivePopup::Info);
     }
 
     fn toggle_help(&mut self) {
-        self.active_popup = match self.active_popup {
-            ActivePopup::Help => ActivePopup::None,
-            _ => ActivePopup::Help,
-        };
+        self.active_popup = toggled_popup(self.active_popup, ActivePopup::Help);
     }
 
     fn focusable(&self) -> bool {
@@ -462,12 +479,7 @@ impl DeviceMonitor {
     }
 
     fn sync_focus(&mut self) {
-        self.focus = match (self.axes_box_present, self.buttons_box_present) {
-            (true, true) => self.focus,
-            (true, false) => Focus::Axes,
-            (false, true) => Focus::Buttons,
-            (false, false) => self.focus,
-        };
+        self.focus = synced_focus(self.focus, self.axes_box_present, self.buttons_box_present);
     }
 
     fn scroll_axes(&mut self, direction: i32) {
@@ -851,7 +863,10 @@ impl DeviceMonitor {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{ActivePopup, axis_offsets_for, command_for};
+    use super::{
+        ActivePopup, DeviceMonitor, Focus, axis_offsets_for, command_for, next_focus, synced_focus,
+        toggled_popup,
+    };
     use crate::device::monitor::controls::Command;
 
     fn key(code: KeyCode) -> KeyEvent {
@@ -907,5 +922,43 @@ mod tests {
             command_for(key(KeyCode::Esc), ActivePopup::Help),
             Command::ToggleHelp
         );
+    }
+
+    #[test]
+    fn toggled_popup_switches_between_help_and_info() {
+        assert_eq!(
+            toggled_popup(ActivePopup::None, ActivePopup::Info),
+            ActivePopup::Info
+        );
+        assert_eq!(
+            toggled_popup(ActivePopup::Info, ActivePopup::Info),
+            ActivePopup::None
+        );
+        assert_eq!(
+            toggled_popup(ActivePopup::Help, ActivePopup::Info),
+            ActivePopup::Info
+        );
+    }
+
+    #[test]
+    fn next_focus_cycles_only_when_both_sections_are_focusable() {
+        assert_eq!(next_focus(Focus::Axes, true), Focus::Buttons);
+        assert_eq!(next_focus(Focus::Buttons, true), Focus::Axes);
+        assert_eq!(next_focus(Focus::Axes, false), Focus::Axes);
+    }
+
+    #[test]
+    fn synced_focus_forces_the_remaining_visible_section() {
+        assert_eq!(synced_focus(Focus::Axes, true, true), Focus::Axes);
+        assert_eq!(synced_focus(Focus::Axes, true, false), Focus::Axes);
+        assert_eq!(synced_focus(Focus::Axes, false, true), Focus::Buttons);
+        assert_eq!(synced_focus(Focus::Buttons, false, false), Focus::Buttons);
+    }
+
+    #[test]
+    fn aligned_window_start_respects_alignment_step() {
+        assert_eq!(DeviceMonitor::aligned_window_start(10, 3, 1), 7);
+        assert_eq!(DeviceMonitor::aligned_window_start(10, 3, 2), 6);
+        assert_eq!(DeviceMonitor::aligned_window_start(2, 5, 3), 0);
     }
 }

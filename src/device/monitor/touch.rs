@@ -300,9 +300,39 @@ fn preferred_touch_contact_key(keys: &AttributeSetRef<KeyCode>) -> Option<KeyCod
 
 #[cfg(test)]
 mod tests {
-    use evdev::{AttributeSet, KeyCode};
+    use evdev::{AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode};
 
-    use super::preferred_touch_contact_key;
+    use super::{TouchMode, TouchSlot, TouchState, preferred_touch_contact_key};
+
+    fn abs(axis: AbsoluteAxisCode, value: i32) -> InputEvent {
+        InputEvent::new(EventType::ABSOLUTE.0, axis.0, value)
+    }
+
+    fn key(code: KeyCode, value: i32) -> InputEvent {
+        InputEvent::new(EventType::KEY.0, code.0, value)
+    }
+
+    fn single_touch_state(contact_key: Option<KeyCode>) -> TouchState {
+        TouchState {
+            mode: TouchMode::SingleTouch { contact_key },
+            current_slot: 0,
+            slots: vec![TouchSlot::default()],
+            max_slots: 1,
+            x_range: (0, 100),
+            y_range: (0, 100),
+        }
+    }
+
+    fn multi_touch_state() -> TouchState {
+        TouchState {
+            mode: TouchMode::MultiTouch { has_slot: true },
+            current_slot: 0,
+            slots: vec![TouchSlot::default(), TouchSlot::default()],
+            max_slots: 2,
+            x_range: (0, 100),
+            y_range: (0, 100),
+        }
+    }
 
     #[test]
     fn preferred_touch_contact_key_prefers_btn_touch() {
@@ -311,5 +341,50 @@ mod tests {
         keys.insert(KeyCode::BTN_TOUCH);
 
         assert_eq!(preferred_touch_contact_key(&keys), Some(KeyCode::BTN_TOUCH));
+    }
+
+    #[test]
+    fn single_touch_with_contact_key_moves_between_active_and_inactive_points() {
+        let mut state = single_touch_state(Some(KeyCode::BTN_TOUCH));
+
+        state.update(&key(KeyCode::BTN_TOUCH, 1));
+        state.update(&abs(AbsoluteAxisCode::ABS_X, 25));
+        state.update(&abs(AbsoluteAxisCode::ABS_Y, 75));
+
+        assert_eq!(state.active_points(), vec![(25, 75)]);
+        assert!(state.inactive_points().is_empty());
+
+        state.update(&key(KeyCode::BTN_TOUCH, 0));
+
+        assert!(state.active_points().is_empty());
+        assert_eq!(state.inactive_points(), vec![(25, 75)]);
+    }
+
+    #[test]
+    fn single_touch_without_contact_key_arms_on_position_updates() {
+        let mut state = single_touch_state(None);
+
+        state.update(&abs(AbsoluteAxisCode::ABS_X, 10));
+        state.update(&abs(AbsoluteAxisCode::ABS_Y, 20));
+
+        assert_eq!(state.active_points(), vec![(10, 20)]);
+        assert!(state.inactive_points().is_empty());
+    }
+
+    #[test]
+    fn multi_touch_release_keeps_last_position_as_inactive_point() {
+        let mut state = multi_touch_state();
+
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_SLOT, 1));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, 42));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_POSITION_X, 40));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, 60));
+
+        assert_eq!(state.active_points(), vec![(40, 60)]);
+
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, -1));
+
+        assert!(state.active_points().is_empty());
+        assert_eq!(state.inactive_points(), vec![(40, 60)]);
     }
 }

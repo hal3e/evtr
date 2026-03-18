@@ -355,3 +355,77 @@ pub(crate) fn axes_layout(area: Rect, abs_count: usize, rel_count: usize) -> Axe
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::layout::Rect;
+
+    use super::{axes_layout, box_layout, split_buttons_column};
+    use crate::device::monitor::config;
+
+    #[test]
+    fn split_buttons_column_returns_sidebar_when_width_allows() {
+        let area = Rect::new(0, 0, 100, 20);
+
+        let (main, buttons) = split_buttons_column(
+            area,
+            true,
+            config::MAIN_COLUMN_MIN_WIDTH,
+            config::BUTTONS_COLUMN_MIN_WIDTH,
+            config::BTN_COL_GAP,
+        );
+
+        let buttons = buttons.expect("expected a buttons column");
+        assert_eq!(
+            main.width + buttons.width + config::MAIN_BUTTONS_GAP,
+            area.width
+        );
+        assert!(main.width >= config::MAIN_COLUMN_MIN_WIDTH);
+        assert!(buttons.width >= config::BUTTONS_COLUMN_MIN_WIDTH);
+    }
+
+    #[test]
+    fn split_buttons_column_stays_single_column_when_sidebar_is_too_narrow() {
+        let area = Rect::new(0, 0, 50, 20);
+
+        let (main, buttons) = split_buttons_column(
+            area,
+            true,
+            config::MAIN_COLUMN_MIN_WIDTH,
+            config::BUTTONS_COLUMN_MIN_WIDTH,
+            config::BTN_COL_GAP,
+        );
+
+        assert_eq!(main, area);
+        assert!(buttons.is_none());
+    }
+
+    #[test]
+    fn box_layout_gives_small_remaining_space_to_buttons_first() {
+        let area = Rect::new(0, 0, 60, 1);
+
+        let layout = box_layout(area, false, 0, false, false, true, true);
+
+        assert!(layout.axes_box.is_none());
+        assert_eq!(layout.buttons_box, Some(area));
+    }
+
+    #[test]
+    fn box_layout_drops_touch_when_it_cannot_fit_with_axes_and_buttons() {
+        let area = Rect::new(0, 0, 60, config::TOUCHPAD_MIN_HEIGHT + 2);
+
+        let layout = box_layout(area, false, 0, false, true, true, true);
+
+        assert!(layout.touch_box.is_none());
+        assert!(layout.axes_box.is_some());
+        assert!(layout.buttons_box.is_some());
+    }
+
+    #[test]
+    fn axes_layout_splits_absolute_and_relative_sections_with_gap() {
+        let layout = axes_layout(Rect::new(0, 0, 40, 10), 2, 2);
+
+        assert_eq!(layout.abs_area, Some(Rect::new(0, 0, 40, 4)));
+        assert_eq!(layout.rel_area, Some(Rect::new(0, 5, 40, 5)));
+    }
+}

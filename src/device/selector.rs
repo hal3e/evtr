@@ -187,6 +187,33 @@ impl DiscoveryIssue {
     }
 }
 
+fn filtered_indexes_by_query<T, F>(
+    items: &[T],
+    query: &str,
+    matcher: &SkimMatcherV2,
+    identifier_of: F,
+) -> Vec<usize>
+where
+    F: Fn(&T) -> &str,
+{
+    if query.is_empty() {
+        return (0..items.len()).collect();
+    }
+
+    let mut scored_items: Vec<(usize, i64)> = items
+        .iter()
+        .enumerate()
+        .filter_map(|(index, item)| {
+            matcher
+                .fuzzy_match(identifier_of(item), query)
+                .map(|score| (index, score))
+        })
+        .collect();
+
+    scored_items.sort_unstable_by(|a, b| b.1.cmp(&a.1));
+    scored_items.into_iter().map(|(index, _)| index).collect()
+}
+
 pub struct DeviceSelector {
     devices: Vec<DeviceInfo>,
     filtered_indexes: Vec<usize>,
@@ -404,24 +431,10 @@ impl DeviceSelector {
     }
 
     fn update_filter(&mut self) {
-        if self.search_query.is_empty() {
-            self.filtered_indexes = (0..self.devices.len()).collect();
-        } else {
-            let mut scored_devices: Vec<(usize, i64)> = self
-                .devices
-                .iter()
-                .enumerate()
-                .filter_map(|(i, device)| {
-                    self.matcher
-                        .fuzzy_match(&device.identifier, &self.search_query)
-                        .map(|score| (i, score))
-                })
-                .collect();
-
-            // Sort by score (higher is better)
-            scored_devices.sort_unstable_by(|a, b| b.1.cmp(&a.1));
-            self.filtered_indexes = scored_devices.into_iter().map(|(i, _)| i).collect();
-        }
+        self.filtered_indexes =
+            filtered_indexes_by_query(&self.devices, &self.search_query, &self.matcher, |device| {
+                device.identifier.as_str()
+            });
         self.selected_filtered_index = 0;
     }
 
@@ -607,7 +620,9 @@ impl DeviceSelector {
 
 #[cfg(test)]
 mod tests {
-    use super::{DeviceSelector, DiscoveryIssue, DiscoveryResult};
+    use fuzzy_matcher::skim::SkimMatcherV2;
+
+    use super::{DeviceSelector, DiscoveryIssue, DiscoveryResult, filtered_indexes_by_query};
     use std::{
         io,
         path::{Path, PathBuf},
@@ -686,5 +701,55 @@ mod tests {
         assert_eq!(result.skipped, 1);
         assert!(result.had_read_dir_error);
         assert_eq!(result.devices, vec!["/dev/input/event0".to_string()]);
+    }
+
+    #[test]
+    fn filtered_indexes_by_query_returns_all_items_for_empty_query() {
+        let matcher = SkimMatcherV2::default();
+        let identifiers = vec!["usb mouse", "gamepad"];
+
+        let indexes = filtered_indexes_by_query(&identifiers, "", &matcher, |item| item);
+
+        assert_eq!(indexes, vec![0, 1]);
+    }
+
+    #[test]
+    fn filtered_indexes_by_query_returns_empty_when_nothing_matches() {
+        let matcher = SkimMatcherV2::default();
+        let identifiers = vec!["usb mouse", "gamepad"];
+
+        let indexes = filtered_indexes_by_query(&identifiers, "keyboard", &matcher, |item| item);
+
+        assert!(indexes.is_empty());
+    }
+
+    #[test]
+    fn apply_discovery_resets_selection_and_updates_empty_state_error() {
+        let mut selector = DeviceSelector {
+            devices: Vec::new(),
+            filtered_indexes: vec![0, 1],
+            selected_filtered_index: 1,
+            search_query: "mouse".to_string(),
+            matcher: SkimMatcherV2::default(),
+            error_message: None,
+            help_visible: false,
+            help_lines: Vec::new(),
+        };
+
+        let discovery = DiscoveryResult::read_dir_failed(
+            "/dev/input",
+            io::Error::new(io::ErrorKind::PermissionDenied, "read denied"),
+        );
+
+        selector.apply_discovery(discovery);
+
+        assert!(selector.devices.is_empty());
+        assert!(selector.filtered_indexes.is_empty());
+        assert_eq!(selector.selected_filtered_index, 0);
+        assert_eq!(
+            selector.error_message,
+            Some("unable to read /dev/input: read denied".to_string())
+        );
+        assert_eq!(selector.search_query, "mouse");
     }
 }
