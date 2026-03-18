@@ -1,26 +1,68 @@
-# evtr 🎛️
+# evtr
 
-`evtr` is a Linux-first terminal UI for exploring raw evdev events. Pick an input device, then watch axes, relative movement, and button states stream in with live gauges.
+`evtr` is a terminal UI for inspecting Linux evdev input devices. Select a
+device from `/dev/input/event*`, then watch axes, relative motion, buttons,
+hats, joysticks, and touch state update live.
 
-## ✨ Highlights
-- 🔍 Fuzzy-search devices from `/dev/input` with live scoring
-- 📊 Rich gauges for absolute + relative axes and button grids
-- 🧭 Fast navigation: PgUp/PgDn, g/G, Home/End, Esc, Ctrl-U, Ctrl-R
+## Requirements
 
-## 🕹️ Flow
-- Selector: type to filter, use arrows/PgUp/PgDn/Home/End to move, Enter to confirm, Esc to back out
-- Monitor: reset with `r`, jump with `g/G`, scroll with arrows or PgUp/PgDn, Esc to return to the selector, Ctrl-C to exit the app
-- Layout adapts to terminal size, keeping axes and mapped buttons responsive
+- Linux with evdev support
+- A terminal supported by `crossterm`
+- Permission to read the selected `/dev/input/event*` node
 
-## 🚀 Quick start
-- ✅ Ensure your user can read `/dev/input/event*` (sudo or group rule)
-- ▶️ `cargo run --release`
-- 🧪 Optional: `cargo run -- --test-ui` for scripted snapshots (see `.claude/settings.local.json`)
+If you see permission errors, grant your user read access to the relevant input devices.
+The exact group or udev rule is distro-specific.
 
-## ℹ️ Notes
-- 🐧 Requires a Linux kernel exposing evdev; run inside a terminal supporting crossterm
-- 🔐 Needs permission to open the selected `/dev/input/event*` node
-- 🪪 UI is purely local; no data leaves your machine
+## Run
 
-## 🛠️ Stack
-- 🧱 Rust + Tokio + Ratatui + Crossterm
+```sh
+cargo run --release
+```
+
+`evtr` does not currently expose any command-line flags.
+
+## Controls
+
+### Selector
+
+- Type to filter devices
+- Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End to move
+- Enter to open the selected device
+- Backspace or Ctrl-U to edit or clear the query
+- Ctrl-R to refresh device discovery
+- `?` to open help
+- Esc or Ctrl-C to exit
+
+### Monitor
+
+- Up/Down or j/k to scroll
+- PageUp/PageDown and g/G or Home/End to jump
+- Shift-J and Shift-K to move focus between axes and buttons when both are visible
+- r to reset relative axes
+- i to show device info
+- y to invert joystick Y rendering
+- `?` to open help
+- Esc to return to the selector when no popup is open
+- Ctrl-C to exit the app
+
+## Failure Modes
+
+`evtr` will report actionable errors when:
+
+- `/dev/input` cannot be read
+- Event nodes exist but cannot be opened
+- The selected device stream ends or returns an I/O error
+- Terminal initialization or redraw fails
+
+## Development
+
+```sh
+cargo fmt
+cargo check
+cargo clippy --all-targets --all-features -- -D warnings
+cargo test
+```
+
+## License
+
+MIT. See `LICENSE`.
