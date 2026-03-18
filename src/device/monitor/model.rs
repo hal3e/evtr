@@ -14,7 +14,10 @@ pub(crate) enum InputTypeId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub(crate) struct InputId(pub(crate) InputTypeId, pub(crate) u16);
+pub(crate) struct InputId {
+    pub(crate) kind: InputTypeId,
+    pub(crate) code: u16,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum AbsoluteState {
@@ -138,7 +141,7 @@ impl InputCollection {
             for axis in axes.iter() {
                 let code = axis.0;
                 inputs.insert(
-                    InputId(InputTypeId::Abs, code),
+                    InputId::absolute(code),
                     DeviceInput {
                         name: format!("{:?}", AbsoluteAxisCode(code)).to_lowercase(),
                         input_type: InputKind::Absolute(absolute_state_from_snapshot(
@@ -160,7 +163,7 @@ impl InputCollection {
             for axis in axes.iter() {
                 let code = axis.0;
                 inputs.insert(
-                    InputId(InputTypeId::Rel, code),
+                    InputId::relative(code),
                     DeviceInput {
                         name: format!("{:?}", RelativeAxisCode(code)).to_lowercase(),
                         input_type: InputKind::Relative(0),
@@ -177,7 +180,7 @@ impl InputCollection {
                 }
                 let code = key.0;
                 inputs.insert(
-                    InputId(InputTypeId::Key, code),
+                    InputId::key(code),
                     DeviceInput {
                         name: strip_btn_prefix(&format!("{key:?}").to_lowercase()),
                         input_type: InputKind::Button(is_key_pressed(key, key_state.as_deref())),
@@ -190,14 +193,8 @@ impl InputCollection {
     }
 
     pub(crate) fn handle_event(&mut self, event: &InputEvent) {
-        let kind = match event.event_type() {
-            EventType::ABSOLUTE => Some(InputTypeId::Abs),
-            EventType::RELATIVE => Some(InputTypeId::Rel),
-            EventType::KEY => Some(InputTypeId::Key),
-            _ => None,
-        };
-        if let Some(kind) = kind
-            && let Some(input) = self.inputs.get_mut(&InputId(kind, event.code()))
+        if let Some(id) = InputId::from_event(event)
+            && let Some(input) = self.inputs.get_mut(&id)
         {
             input.input_type.update(event);
         }
@@ -213,7 +210,7 @@ impl InputCollection {
 
     pub(crate) fn absolute_axis(&self, code: AbsoluteAxisCode) -> Option<AbsoluteAxis> {
         self.inputs
-            .get(&InputId(InputTypeId::Abs, code.0))
+            .get(&InputId::absolute(code.0))
             .and_then(|input| match input.input_type {
                 InputKind::Absolute(AbsoluteState::Kernel { min, max, value })
                 | InputKind::Absolute(AbsoluteState::Fallback { min, max, value }) => {
@@ -247,6 +244,35 @@ impl InputCollection {
         self.inputs
             .values()
             .filter(|input| matches!(input.input_type, InputKind::Button(_)))
+    }
+}
+
+impl InputId {
+    pub(crate) fn new(kind: InputTypeId, code: u16) -> Self {
+        Self { kind, code }
+    }
+
+    pub(crate) fn absolute(code: u16) -> Self {
+        Self::new(InputTypeId::Abs, code)
+    }
+
+    pub(crate) fn relative(code: u16) -> Self {
+        Self::new(InputTypeId::Rel, code)
+    }
+
+    pub(crate) fn key(code: u16) -> Self {
+        Self::new(InputTypeId::Key, code)
+    }
+
+    pub(crate) fn from_event(event: &InputEvent) -> Option<Self> {
+        let kind = match event.event_type() {
+            EventType::ABSOLUTE => InputTypeId::Abs,
+            EventType::RELATIVE => InputTypeId::Rel,
+            EventType::KEY => InputTypeId::Key,
+            _ => return None,
+        };
+
+        Some(Self::new(kind, event.code()))
     }
 }
 
@@ -295,8 +321,8 @@ mod tests {
     use evdev::{AttributeSet, KeyCode};
 
     use super::{
-        AbsoluteState, AxisSnapshot, absolute_state_from_snapshot, is_key_pressed,
-        is_touch_contact_button,
+        AbsoluteState, AxisSnapshot, InputId, InputTypeId, absolute_state_from_snapshot,
+        is_key_pressed, is_touch_contact_button,
     };
     use crate::device::monitor::config;
 
@@ -345,5 +371,30 @@ mod tests {
         assert!(is_touch_contact_button(KeyCode::BTN_TOOL_DOUBLETAP));
         assert!(!is_touch_contact_button(KeyCode::BTN_LEFT));
         assert!(!is_touch_contact_button(KeyCode::BTN_SOUTH));
+    }
+
+    #[test]
+    fn input_id_helpers_use_named_fields() {
+        assert_eq!(
+            InputId::absolute(1),
+            InputId {
+                kind: InputTypeId::Abs,
+                code: 1,
+            }
+        );
+        assert_eq!(
+            InputId::relative(2),
+            InputId {
+                kind: InputTypeId::Rel,
+                code: 2,
+            }
+        );
+        assert_eq!(
+            InputId::key(3),
+            InputId {
+                kind: InputTypeId::Key,
+                code: 3,
+            }
+        );
     }
 }

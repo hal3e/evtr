@@ -39,7 +39,7 @@ use crate::{
         popup::{Popup, render_popup},
         selector::DeviceInfo,
     },
-    error::{Error, Result},
+    error::{Error, ErrorArea, Result},
 };
 
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
@@ -290,9 +290,13 @@ impl DeviceMonitor {
             &initial_state_load,
         );
         let help_popup = HelpPopup::new();
-        let device_stream = device
-            .into_event_stream()
-            .map_err(|err| Error::evdev(format!("open device stream ({identifier})"), err))?;
+        let device_stream = device.into_event_stream().map_err(|err| {
+            Error::evdev(
+                ErrorArea::Monitor,
+                format!("open device stream ({identifier})"),
+                err,
+            )
+        })?;
         let counts = Counts {
             abs: inputs.iter_absolute().count(),
             rel: inputs.iter_relative().count(),
@@ -338,7 +342,7 @@ impl DeviceMonitor {
         loop {
             terminal
                 .draw(|frame| monitor.render(frame.area(), frame.buffer_mut()))
-                .map_err(|err| Error::io("monitor draw", err))?;
+                .map_err(|err| Error::io(ErrorArea::Monitor, "monitor draw", err))?;
 
             select! {
                 event = term_events.next() => {
@@ -363,13 +367,25 @@ impl DeviceMonitor {
                             }
                         }
                         Some(Ok(_)) => {}
-                        Some(Err(err)) => return Err(Error::terminal("terminal event stream", err)),
-                        None => return Err(Error::stream_ended("terminal event stream")),
+                        Some(Err(err)) => {
+                            return Err(Error::io(
+                                ErrorArea::Monitor,
+                                "terminal event stream",
+                                err,
+                            ));
+                        }
+                        None => {
+                            return Err(Error::stream_ended(
+                                ErrorArea::Monitor,
+                                "terminal event stream",
+                            ));
+                        }
                     }
                 }
                 event = monitor.device_stream.next_event() => {
                     let event = event.map_err(|err| {
                         Error::evdev(
+                            ErrorArea::Monitor,
                             format!("device event stream ({})", monitor.identifier),
                             err,
                         )

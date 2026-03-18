@@ -21,7 +21,7 @@ use ratatui::{
 use super::State;
 use crate::{
     device::popup::{Popup, render_popup},
-    error::{Error, Result},
+    error::{Error, ErrorArea, Result},
 };
 
 const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
@@ -305,7 +305,7 @@ impl DeviceSelector {
                 .draw(|frame| {
                     selector.render(frame.area(), frame.buffer_mut());
                 })
-                .map_err(|err| Error::io("selector draw", err))?;
+                .map_err(|err| Error::io(ErrorArea::Selector, "selector draw", err))?;
 
             match term_events.next().await {
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
@@ -390,8 +390,15 @@ impl DeviceSelector {
                     }
                 }
                 Some(Ok(_)) => {}
-                Some(Err(err)) => return Err(Error::terminal("terminal event stream", err)),
-                None => return Err(Error::stream_ended("terminal event stream")),
+                Some(Err(err)) => {
+                    return Err(Error::io(ErrorArea::Selector, "terminal event stream", err));
+                }
+                None => {
+                    return Err(Error::stream_ended(
+                        ErrorArea::Selector,
+                        "terminal event stream",
+                    ));
+                }
             }
         }
     }
