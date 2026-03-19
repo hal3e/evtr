@@ -51,49 +51,37 @@ pub(crate) enum MonitorExit {
     ExitApp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum InitialStateLoad {
-    Full,
-    Partial { warnings: Vec<String> },
+pub(super) struct ComponentBootstrap<T> {
+    pub(super) value: T,
+    pub(super) startup_warnings: Vec<String>,
 }
 
-impl InitialStateLoad {
-    fn record_warning(&mut self, warning: impl Into<String>) {
-        match self {
-            InitialStateLoad::Full => {
-                *self = InitialStateLoad::Partial {
-                    warnings: vec![warning.into()],
-                };
-            }
-            InitialStateLoad::Partial { warnings } => warnings.push(warning.into()),
+impl<T> ComponentBootstrap<T> {
+    fn new(value: T) -> Self {
+        Self {
+            value,
+            startup_warnings: Vec::new(),
         }
     }
+}
 
-    fn merge(self, other: Self) -> Self {
-        let mut warnings = Vec::new();
-        if let InitialStateLoad::Partial {
-            warnings: self_warnings,
-        } = self
-        {
-            warnings.extend(self_warnings);
-        }
-        if let InitialStateLoad::Partial {
-            warnings: other_warnings,
-        } = other
-        {
-            warnings.extend(other_warnings);
-        }
-        if warnings.is_empty() {
-            InitialStateLoad::Full
-        } else {
-            InitialStateLoad::Partial { warnings }
-        }
-    }
+struct DeviceBootstrap {
+    inputs: InputCollection,
+    touch: TouchState,
+    startup_warnings: Vec<String>,
+}
 
-    fn warnings(&self) -> &[String] {
-        match self {
-            InitialStateLoad::Full => &[],
-            InitialStateLoad::Partial { warnings } => warnings,
+impl DeviceBootstrap {
+    fn from_device(device: &evdev::Device) -> Self {
+        let inputs = InputCollection::from_device(device);
+        let touch = TouchState::from_device(device);
+        let mut startup_warnings = inputs.startup_warnings;
+        startup_warnings.extend(touch.startup_warnings);
+
+        Self {
+            inputs: inputs.value,
+            touch: touch.value,
+            startup_warnings,
         }
     }
 }
@@ -168,7 +156,7 @@ impl DeviceInfoPopup {
         driver_version: (u8, u8, u8),
         input_id: evdev::InputId,
         phys: Option<&str>,
-        initial_state_load: &InitialStateLoad,
+        startup_warnings: &[String],
     ) -> Self {
         let (major, minor, patch) = driver_version;
         let bus = input_id.bus_type().0;
@@ -183,7 +171,7 @@ impl DeviceInfoPopup {
             ),
             format!("Input device phys: {phys}"),
         ];
-        for warning in initial_state_load.warnings() {
+        for warning in startup_warnings {
             lines.push(format!("Startup warning: {warning}"));
         }
 
@@ -308,14 +296,12 @@ fn synced_focus(current: Focus, axes_box_present: bool, buttons_box_present: boo
 
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
-        let (inputs, input_load) = InputCollection::from_device(&device);
-        let (touch, touch_load) = TouchState::from_device(&device);
-        let initial_state_load = input_load.merge(touch_load);
+        let bootstrap = DeviceBootstrap::from_device(&device);
         let info_popup = DeviceInfoPopup::new(
             device.driver_version(),
             device.input_id(),
             device.physical_path(),
-            &initial_state_load,
+            &bootstrap.startup_warnings,
         );
         let help_popup = HelpPopup::new();
         let device_stream = device.into_event_stream().map_err(|err| {
@@ -326,9 +312,9 @@ impl DeviceMonitor {
             )
         })?;
         let counts = Counts {
-            abs: inputs.iter_absolute().count(),
-            rel: inputs.iter_relative().count(),
-            btn: inputs.iter_buttons().count(),
+            abs: bootstrap.inputs.iter_absolute().count(),
+            rel: bootstrap.inputs.iter_relative().count(),
+            btn: bootstrap.inputs.iter_buttons().count(),
         };
         let focus = if counts.total_axes() > 0 {
             Focus::Axes
@@ -337,14 +323,14 @@ impl DeviceMonitor {
         };
         Ok(Self {
             device_stream,
-            inputs,
+            inputs: bootstrap.inputs,
             identifier,
             effective_counts: counts,
             counts,
             info_popup,
             help_popup,
             active_popup: ActivePopup::None,
-            touch,
+            touch: bootstrap.touch,
             focus,
             axis_scroll: 0,
             button_row_scroll: 0,

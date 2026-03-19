@@ -1,6 +1,6 @@
 use evdev::{AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, PropType};
 
-use crate::device::monitor::InitialStateLoad;
+use crate::device::monitor::ComponentBootstrap;
 
 #[derive(Clone, Debug, Default)]
 struct TouchSlot {
@@ -66,9 +66,9 @@ enum TouchMode {
 }
 
 impl TouchState {
-    pub(crate) fn from_device(device: &Device) -> (Self, InitialStateLoad) {
+    pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
         let Some(axes) = device.supported_absolute_axes() else {
-            return (Self::disabled(), InitialStateLoad::Full);
+            return ComponentBootstrap::new(Self::disabled());
         };
 
         let supports_mt_x = axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_X);
@@ -100,14 +100,14 @@ impl TouchState {
         };
 
         if matches!(mode, TouchMode::None) {
-            return (Self::disabled(), InitialStateLoad::Full);
+            return ComponentBootstrap::new(Self::disabled());
         }
 
-        let mut initial_state_load = InitialStateLoad::Full;
+        let mut startup_warnings = Vec::new();
         let abs_state = match device.get_abs_state() {
             Ok(state) => Some(state),
             Err(err) => {
-                initial_state_load.record_warning(format!(
+                startup_warnings.push(format!(
                     "unable to load touch axis state; inferring touch bounds from incoming events: {err}"
                 ));
                 None
@@ -124,7 +124,7 @@ impl TouchState {
                 AbsoluteAxisCode::ABS_MT_POSITION_Y,
             ),
             TouchMode::SingleTouch { .. } => (AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y),
-            TouchMode::None => return (Self::disabled(), InitialStateLoad::Full),
+            TouchMode::None => return ComponentBootstrap::new(Self::disabled()),
         };
 
         if let Some(abs_state) = abs_state.as_ref() {
@@ -142,15 +142,16 @@ impl TouchState {
         }
 
         if abs_state.is_some() && (!x_range.is_known() || !y_range.is_known()) {
-            initial_state_load.record_warning(
-                "touch position range is unavailable; inferring touch bounds from incoming events",
+            startup_warnings.push(
+                "touch position range is unavailable; inferring touch bounds from incoming events"
+                    .to_string(),
             );
         }
 
-        (
-            Self::from_parts(mode, slot_limit, x_range, y_range),
-            initial_state_load,
-        )
+        ComponentBootstrap {
+            value: Self::from_parts(mode, slot_limit, x_range, y_range),
+            startup_warnings,
+        }
     }
 
     fn disabled() -> Self {

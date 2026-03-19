@@ -4,7 +4,7 @@ use evdev::{
     AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, RelativeAxisCode,
 };
 
-use crate::device::monitor::{InitialStateLoad, config, math};
+use crate::device::monitor::{ComponentBootstrap, config, math};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub(crate) enum InputTypeId {
@@ -104,15 +104,15 @@ struct AxisSnapshot {
 }
 
 impl InputCollection {
-    pub(crate) fn from_device(device: &Device) -> (Self, InitialStateLoad) {
+    pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
         let mut inputs = BTreeMap::new();
-        let mut initial_state_load = InitialStateLoad::Full;
+        let mut startup_warnings = Vec::new();
 
         let abs_state = if device.supported_absolute_axes().is_some() {
             match device.get_abs_state() {
                 Ok(state) => Some(state),
                 Err(err) => {
-                    initial_state_load.record_warning(format!(
+                    startup_warnings.push(format!(
                         "unable to load absolute axis state; using fallback defaults until events arrive: {err}"
                     ));
                     None
@@ -126,7 +126,7 @@ impl InputCollection {
             match device.get_key_state() {
                 Ok(state) => Some(state),
                 Err(err) => {
-                    initial_state_load.record_warning(format!(
+                    startup_warnings.push(format!(
                         "unable to load key/button state; buttons start released until events arrive: {err}"
                     ));
                     None
@@ -189,7 +189,10 @@ impl InputCollection {
             }
         }
 
-        (Self { inputs }, initial_state_load)
+        ComponentBootstrap {
+            value: Self { inputs },
+            startup_warnings,
+        }
     }
 
     pub(crate) fn handle_event(&mut self, event: &InputEvent) {
