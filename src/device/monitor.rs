@@ -697,15 +697,15 @@ impl DeviceMonitor {
             AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
         }
 
-        if let Some(touch_area) = touch_area {
+        if let (Some(touch_area), Some((x_range, y_range))) = (touch_area, self.touch.ranges()) {
             let active_points = self.touch.active_points();
             let inactive_points = self.touch.inactive_points();
             TouchRenderer::render(
                 touch_area,
                 &active_points,
                 &inactive_points,
-                self.touch.x_range(),
-                self.touch.y_range(),
+                x_range,
+                y_range,
                 buf,
             );
         }

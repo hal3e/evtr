@@ -9,13 +9,53 @@ struct TouchSlot {
     y: Option<i32>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum TouchRange {
+    Unknown,
+    Fixed { min: i32, max: i32 },
+    Observed { min: i32, max: i32 },
+}
+
+impl TouchRange {
+    fn fixed(min: i32, max: i32) -> Self {
+        Self::Fixed { min, max }
+    }
+
+    fn range(&self) -> Option<(i32, i32)> {
+        match self {
+            Self::Unknown => None,
+            Self::Fixed { min, max } | Self::Observed { min, max } => Some((*min, *max)),
+        }
+    }
+
+    fn is_known(&self) -> bool {
+        self.range().is_some()
+    }
+
+    fn observe(&mut self, value: i32) {
+        match self {
+            Self::Unknown => {
+                *self = Self::Observed {
+                    min: value,
+                    max: value,
+                };
+            }
+            Self::Observed { min, max } => {
+                *min = (*min).min(value);
+                *max = (*max).max(value);
+            }
+            Self::Fixed { .. } => {}
+        }
+    }
+}
+
 pub(crate) struct TouchState {
     mode: TouchMode,
     current_slot: usize,
     slots: Vec<TouchSlot>,
-    max_slots: usize,
-    x_range: (i32, i32),
-    y_range: (i32, i32),
+    slot_limit: Option<usize>,
+    x_range: TouchRange,
+    y_range: TouchRange,
 }
 
 #[derive(Clone, Debug)]
@@ -68,15 +108,17 @@ impl TouchState {
             Ok(state) => Some(state),
             Err(err) => {
                 initial_state_load.record_warning(format!(
-                    "unable to load touch axis state; touch starts empty until events arrive: {err}"
+                    "unable to load touch axis state; inferring touch bounds from incoming events: {err}"
                 ));
                 None
             }
         };
-        let mut x_range = None;
-        let mut y_range = None;
-        let mut slot_max = None;
-        let (x_axis, y_axis) = match mode {
+
+        let mut x_range = TouchRange::Unknown;
+        let mut y_range = TouchRange::Unknown;
+        let mut slot_limit = None;
+
+        let (x_axis, y_axis) = match &mode {
             TouchMode::MultiTouch { .. } => (
                 AbsoluteAxisCode::ABS_MT_POSITION_X,
                 AbsoluteAxisCode::ABS_MT_POSITION_Y,
@@ -87,90 +129,93 @@ impl TouchState {
 
         if let Some(abs_state) = abs_state.as_ref() {
             if let Some(info) = abs_state.get(x_axis.0 as usize) {
-                x_range = Some((info.minimum, info.maximum));
+                x_range = TouchRange::fixed(info.minimum, info.maximum);
             }
             if let Some(info) = abs_state.get(y_axis.0 as usize) {
-                y_range = Some((info.minimum, info.maximum));
+                y_range = TouchRange::fixed(info.minimum, info.maximum);
             }
             if matches!(mode, TouchMode::MultiTouch { has_slot: true })
                 && let Some(info) = abs_state.get(AbsoluteAxisCode::ABS_MT_SLOT.0 as usize)
             {
-                slot_max = Some(info.maximum);
+                slot_limit = Some(info.maximum.max(0) as usize + 1);
             }
         }
 
-        let Some(x_range) = x_range else {
+        if abs_state.is_some() && (!x_range.is_known() || !y_range.is_known()) {
             initial_state_load.record_warning(
-                "touch position range is unavailable; touch view stays hidden until supported state can be read",
+                "touch position range is unavailable; inferring touch bounds from incoming events",
             );
-            return (Self::disabled(), initial_state_load);
-        };
-        let Some(y_range) = y_range else {
-            initial_state_load.record_warning(
-                "touch position range is unavailable; touch view stays hidden until supported state can be read",
-            );
-            return (Self::disabled(), initial_state_load);
-        };
-
-        let slots_len = match mode {
-            TouchMode::MultiTouch { has_slot } => {
-                if has_slot {
-                    slot_max.map(|max| max.max(0) as usize + 1).unwrap_or(1)
-                } else {
-                    1
-                }
-            }
-            TouchMode::SingleTouch { .. } => 1,
-            TouchMode::None => 0,
-        };
-
-        let mut slots = vec![TouchSlot::default(); slots_len];
-        if matches!(mode, TouchMode::SingleTouch { contact_key: None }) && !slots.is_empty() {
-            slots[0].tracking_id = Some(0);
         }
 
         (
-            Self {
-                mode,
-                current_slot: 0,
-                slots,
-                max_slots: slots_len,
-                x_range,
-                y_range,
-            },
+            Self::from_parts(mode, slot_limit, x_range, y_range),
             initial_state_load,
         )
     }
 
     fn disabled() -> Self {
+        Self::from_parts(
+            TouchMode::None,
+            Some(0),
+            TouchRange::Unknown,
+            TouchRange::Unknown,
+        )
+    }
+
+    fn from_parts(
+        mode: TouchMode,
+        slot_limit: Option<usize>,
+        x_range: TouchRange,
+        y_range: TouchRange,
+    ) -> Self {
+        let slot_limit = match &mode {
+            TouchMode::None => Some(0),
+            TouchMode::SingleTouch { .. } | TouchMode::MultiTouch { has_slot: false } => Some(1),
+            TouchMode::MultiTouch { has_slot: true } => slot_limit,
+        };
+
+        let slots_len = match &mode {
+            TouchMode::None => 0,
+            _ => slot_limit.unwrap_or(1).max(1),
+        };
+
+        let mut slots = vec![TouchSlot::default(); slots_len];
+        if matches!(&mode, TouchMode::SingleTouch { contact_key: None }) && !slots.is_empty() {
+            slots[0].tracking_id = Some(0);
+        }
+
         Self {
-            mode: TouchMode::None,
+            mode,
             current_slot: 0,
-            slots: Vec::new(),
-            max_slots: 0,
-            x_range: (0, 1),
-            y_range: (0, 1),
+            slots,
+            slot_limit,
+            x_range,
+            y_range,
         }
     }
 
     pub(crate) fn enabled(&self) -> bool {
-        !matches!(self.mode, TouchMode::None)
+        self.x_range.is_known() && self.y_range.is_known()
     }
 
     pub(crate) fn is_touch_device(&self) -> bool {
-        self.enabled()
+        !matches!(self.mode, TouchMode::None)
     }
 
-    pub(crate) fn x_range(&self) -> (i32, i32) {
-        self.x_range
+    pub(crate) fn x_range(&self) -> Option<(i32, i32)> {
+        self.x_range.range()
     }
 
-    pub(crate) fn y_range(&self) -> (i32, i32) {
-        self.y_range
+    pub(crate) fn y_range(&self) -> Option<(i32, i32)> {
+        self.y_range.range()
+    }
+
+    pub(crate) fn ranges(&self) -> Option<((i32, i32), (i32, i32))> {
+        Some((self.x_range()?, self.y_range()?))
     }
 
     pub(crate) fn active_points(&self) -> Vec<(i32, i32)> {
-        if !self.enabled() {
+        if !self.is_touch_device() {
             return Vec::new();
         }
         self.slots
@@ -183,7 +228,7 @@ impl TouchState {
     }
 
     pub(crate) fn inactive_points(&self) -> Vec<(i32, i32)> {
-        if !self.enabled() {
+        if !self.is_touch_device() {
             return Vec::new();
         }
         self.slots
@@ -196,7 +241,7 @@ impl TouchState {
     }
 
     pub(crate) fn update(&mut self, event: &InputEvent) {
-        if !self.enabled() {
+        if !self.is_touch_device() {
             return;
         }
 
@@ -208,7 +253,7 @@ impl TouchState {
                     AbsoluteAxisCode::ABS_MT_SLOT => {
                         if value >= 0 {
                             let slot = value as usize;
-                            if slot < self.max_slots {
+                            if self.slot_supported(slot) {
                                 self.current_slot = slot;
                                 self.ensure_slot();
                             }
@@ -227,10 +272,12 @@ impl TouchState {
                     AbsoluteAxisCode::ABS_MT_POSITION_X => {
                         self.ensure_slot();
                         self.slots[self.current_slot].x = Some(value);
+                        self.x_range.observe(value);
                     }
                     AbsoluteAxisCode::ABS_MT_POSITION_Y => {
                         self.ensure_slot();
                         self.slots[self.current_slot].y = Some(value);
+                        self.y_range.observe(value);
                     }
                     _ => {}
                 }
@@ -241,9 +288,11 @@ impl TouchState {
                 match axis {
                     AbsoluteAxisCode::ABS_X => {
                         self.slots[0].x = Some(value);
+                        self.x_range.observe(value);
                     }
                     AbsoluteAxisCode::ABS_Y => {
                         self.slots[0].y = Some(value);
+                        self.y_range.observe(value);
                     }
                     _ => {}
                 }
@@ -272,18 +321,27 @@ impl TouchState {
         }
     }
 
+    fn slot_supported(&self, slot: usize) -> bool {
+        match self.slot_limit {
+            Some(limit) => slot < limit,
+            None => true,
+        }
+    }
+
     fn ensure_slot(&mut self) {
-        if self.max_slots == 0 {
-            return;
-        }
-        if self.current_slot >= self.max_slots {
-            self.current_slot = self.max_slots - 1;
-        }
-        if self.current_slot >= self.slots.len() {
-            let target = (self.current_slot + 1).min(self.max_slots);
-            if target > self.slots.len() {
-                self.slots.resize(target, TouchSlot::default());
+        let target = match self.slot_limit {
+            Some(0) => return,
+            Some(limit) => {
+                if self.current_slot >= limit {
+                    self.current_slot = limit - 1;
+                }
+                (self.current_slot + 1).min(limit)
             }
+            None => self.current_slot + 1,
+        };
+
+        if target > self.slots.len() {
+            self.slots.resize(target, TouchSlot::default());
         }
     }
 }
@@ -302,7 +360,7 @@ fn preferred_touch_contact_key(keys: &AttributeSetRef<KeyCode>) -> Option<KeyCod
 mod tests {
     use evdev::{AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode};
 
-    use super::{TouchMode, TouchSlot, TouchState, preferred_touch_contact_key};
+    use super::{TouchMode, TouchRange, TouchState, preferred_touch_contact_key};
 
     fn abs(axis: AbsoluteAxisCode, value: i32) -> InputEvent {
         InputEvent::new(EventType::ABSOLUTE.0, axis.0, value)
@@ -313,25 +371,39 @@ mod tests {
     }
 
     fn single_touch_state(contact_key: Option<KeyCode>) -> TouchState {
-        TouchState {
-            mode: TouchMode::SingleTouch { contact_key },
-            current_slot: 0,
-            slots: vec![TouchSlot::default()],
-            max_slots: 1,
-            x_range: (0, 100),
-            y_range: (0, 100),
-        }
+        TouchState::from_parts(
+            TouchMode::SingleTouch { contact_key },
+            None,
+            TouchRange::fixed(0, 100),
+            TouchRange::fixed(0, 100),
+        )
+    }
+
+    fn pending_single_touch_state(contact_key: Option<KeyCode>) -> TouchState {
+        TouchState::from_parts(
+            TouchMode::SingleTouch { contact_key },
+            None,
+            TouchRange::Unknown,
+            TouchRange::Unknown,
+        )
     }
 
     fn multi_touch_state() -> TouchState {
-        TouchState {
-            mode: TouchMode::MultiTouch { has_slot: true },
-            current_slot: 0,
-            slots: vec![TouchSlot::default(), TouchSlot::default()],
-            max_slots: 2,
-            x_range: (0, 100),
-            y_range: (0, 100),
-        }
+        TouchState::from_parts(
+            TouchMode::MultiTouch { has_slot: true },
+            Some(2),
+            TouchRange::fixed(0, 100),
+            TouchRange::fixed(0, 100),
+        )
+    }
+
+    fn pending_multi_touch_state() -> TouchState {
+        TouchState::from_parts(
+            TouchMode::MultiTouch { has_slot: true },
+            None,
+            TouchRange::Unknown,
+            TouchRange::Unknown,
+        )
     }
 
     #[test]
@@ -369,6 +441,44 @@ mod tests {
 
         assert_eq!(state.active_points(), vec![(10, 20)]);
         assert!(state.inactive_points().is_empty());
+    }
+
+    #[test]
+    fn pending_touch_ranges_become_renderable_after_events_arrive() {
+        let mut state = pending_single_touch_state(None);
+
+        assert!(state.is_touch_device());
+        assert!(!state.enabled());
+
+        state.update(&abs(AbsoluteAxisCode::ABS_X, 10));
+        assert!(!state.enabled());
+        assert_eq!(state.x_range(), Some((10, 10)));
+        assert_eq!(state.y_range(), None);
+
+        state.update(&abs(AbsoluteAxisCode::ABS_Y, 20));
+        state.update(&abs(AbsoluteAxisCode::ABS_X, 5));
+        state.update(&abs(AbsoluteAxisCode::ABS_Y, 25));
+
+        assert!(state.enabled());
+        assert_eq!(state.x_range(), Some((5, 10)));
+        assert_eq!(state.y_range(), Some((20, 25)));
+        assert_eq!(state.active_points(), vec![(5, 25)]);
+    }
+
+    #[test]
+    fn pending_multi_touch_state_grows_slots_from_events() {
+        let mut state = pending_multi_touch_state();
+
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_SLOT, 2));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_TRACKING_ID, 42));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_POSITION_X, 40));
+        state.update(&abs(AbsoluteAxisCode::ABS_MT_POSITION_Y, 60));
+
+        assert_eq!(state.slots.len(), 3);
+        assert!(state.enabled());
+        assert_eq!(state.x_range(), Some((40, 40)));
+        assert_eq!(state.y_range(), Some((60, 60)));
+        assert_eq!(state.active_points(), vec![(40, 60)]);
     }
 
     #[test]
