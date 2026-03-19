@@ -9,6 +9,7 @@ use crate::device::monitor::{
     model::{DeviceInput, InputSlice},
     ui,
 };
+use crate::device::text;
 
 pub(crate) struct AxisRenderer;
 
@@ -94,7 +95,7 @@ impl AxisRenderer {
         if gauge_area.width == 0 {
             return;
         }
-        let truncated_name = ui::truncate_utf8(&input.name, label_rect.width as usize);
+        let truncated_name = text::truncate_display_width(&input.name, label_rect.width as usize);
 
         Paragraph::new(truncated_name)
             .style(config::style_label())

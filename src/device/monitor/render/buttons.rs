@@ -9,8 +9,8 @@ use ratatui::{
 use crate::device::monitor::{
     config,
     model::{DeviceInput, InputKind, InputSlice},
-    ui,
 };
+use crate::device::text;
 
 pub(crate) struct ButtonGrid;
 
@@ -121,7 +121,7 @@ impl ButtonGrid {
         } else {
             area.width.saturating_sub(2)
         };
-        let text = ui::truncate_utf8(&input.name, available_width as usize);
+        let text = text::truncate_display_width(&input.name, available_width as usize);
         if compact {
             let mut label_style = config::style_label();
             if pressed {

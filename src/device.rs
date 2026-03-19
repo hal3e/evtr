@@ -1,6 +1,7 @@
 mod monitor;
 mod popup;
 mod selector;
+mod text;
 
 use std::mem;
 
