@@ -49,7 +49,6 @@ pub struct DeviceInfo {
 #[derive(Debug)]
 struct DiscoveryError {
     path: PathBuf,
-    kind: io::ErrorKind,
     message: String,
 }
 
@@ -57,85 +56,122 @@ impl DiscoveryError {
     fn new(path: impl Into<PathBuf>, err: io::Error) -> Self {
         Self {
             path: path.into(),
-            kind: err.kind(),
             message: err.to_string(),
         }
     }
 }
 
 #[derive(Debug)]
-struct DiscoveryResult<T> {
-    devices: Vec<T>,
+struct DiscoveryStats {
     event_nodes: usize,
-    skipped: usize,
-    had_read_dir_error: bool,
-    first_read_dir_error: Option<DiscoveryError>,
-    first_open_error: Option<DiscoveryError>,
+    permission_denied: usize,
+    open_failed: usize,
+    read_dir_failed: usize,
+    sample_read_dir_error: Option<DiscoveryError>,
+    sample_open_error: Option<DiscoveryError>,
 }
 
-impl<T> DiscoveryResult<T> {
+impl DiscoveryStats {
     fn new() -> Self {
         Self {
-            devices: Vec::new(),
             event_nodes: 0,
-            skipped: 0,
-            had_read_dir_error: false,
-            first_read_dir_error: None,
-            first_open_error: None,
+            permission_denied: 0,
+            open_failed: 0,
+            read_dir_failed: 0,
+            sample_read_dir_error: None,
+            sample_open_error: None,
         }
     }
 
-    fn read_dir_failed(path: impl Into<PathBuf>, err: io::Error) -> Self {
-        let mut result = Self::new();
-        result.record_read_dir_error(path, err);
-        result
-    }
-
     fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        self.had_read_dir_error = true;
-        if self.first_read_dir_error.is_none() {
-            self.first_read_dir_error = Some(DiscoveryError::new(path, err));
+        self.read_dir_failed += 1;
+        if self.sample_read_dir_error.is_none() {
+            self.sample_read_dir_error = Some(DiscoveryError::new(path, err));
         }
     }
 
     fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        self.skipped += 1;
-        if self.first_open_error.is_none() {
-            self.first_open_error = Some(DiscoveryError::new(path, err));
+        let kind = err.kind();
+        if kind == io::ErrorKind::PermissionDenied {
+            self.permission_denied += 1;
+            return;
+        }
+
+        self.open_failed += 1;
+        if self.sample_open_error.is_none() {
+            self.sample_open_error = Some(DiscoveryError::new(path, err));
         }
     }
 
-    fn issue(&self) -> Option<DiscoveryIssue> {
-        if !self.devices.is_empty() {
+    fn total_open_failures(&self) -> usize {
+        self.permission_denied + self.open_failed
+    }
+
+    fn issue(&self, has_devices: bool) -> Option<DiscoveryIssue> {
+        if has_devices {
             return None;
         }
 
-        if let Some(error) = &self.first_read_dir_error {
-            return Some(DiscoveryIssue::ReadDir {
-                path: error.path.clone(),
-                message: error.message.clone(),
-            });
-        }
-
         if self.event_nodes == 0 {
-            return Some(DiscoveryIssue::NoDevicesFound);
+            return if let Some(error) = &self.sample_read_dir_error {
+                Some(DiscoveryIssue::ReadDir {
+                    path: error.path.clone(),
+                    message: error.message.clone(),
+                })
+            } else {
+                Some(DiscoveryIssue::NoDevicesFound)
+            };
         }
 
-        if let Some(error) = &self.first_open_error {
-            if error.kind == io::ErrorKind::PermissionDenied {
-                return Some(DiscoveryIssue::PermissionDenied {
-                    skipped: self.skipped,
+        let skipped = self.total_open_failures();
+        if skipped == 0 {
+            return self
+                .sample_read_dir_error
+                .as_ref()
+                .map(|error| DiscoveryIssue::ReadDir {
+                    path: error.path.clone(),
+                    message: error.message.clone(),
                 });
-            }
+        }
 
+        if self.open_failed == 0 {
+            return Some(DiscoveryIssue::PermissionDenied { skipped });
+        }
+
+        if let Some(error) = &self.sample_open_error {
             return Some(DiscoveryIssue::OpenFailed {
-                skipped: self.skipped,
+                skipped,
                 path: error.path.clone(),
                 message: error.message.clone(),
             });
         }
 
         Some(DiscoveryIssue::NoDevicesFound)
+    }
+}
+
+#[derive(Debug)]
+struct DiscoveryResult<T> {
+    devices: Vec<T>,
+    stats: DiscoveryStats,
+}
+
+impl<T> DiscoveryResult<T> {
+    fn new() -> Self {
+        Self {
+            devices: Vec::new(),
+            stats: DiscoveryStats::new(),
+        }
+    }
+
+    fn read_dir_failed(path: impl Into<PathBuf>, err: io::Error) -> Self {
+        let mut result = Self::new();
+        result.stats.record_read_dir_error(path, err);
+        result
+    }
+
+    fn issue(&self) -> Option<DiscoveryIssue> {
+        self.stats.issue(!self.devices.is_empty())
     }
 
     fn error_message(&self) -> Option<String> {
@@ -277,13 +313,13 @@ impl DeviceSelector {
                         continue;
                     }
 
-                    result.event_nodes += 1;
+                    result.stats.event_nodes += 1;
                     match open_device(&path) {
                         Ok(device) => result.devices.push(device),
-                        Err(err) => result.record_open_error(path, err),
+                        Err(err) => result.stats.record_open_error(path, err),
                     }
                 }
-                Err(err) => result.record_read_dir_error(INPUT_DIR, err),
+                Err(err) => result.stats.record_read_dir_error(INPUT_DIR, err),
             }
         }
 
@@ -638,12 +674,12 @@ mod tests {
     #[test]
     fn discovery_issue_reports_permission_guidance_when_all_devices_are_skipped() {
         let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.event_nodes = 2;
-        result.record_open_error(
+        result.stats.event_nodes = 2;
+        result.stats.record_open_error(
             "/dev/input/event0",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
-        result.record_open_error(
+        result.stats.record_open_error(
             "/dev/input/event1",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
@@ -658,6 +694,48 @@ mod tests {
                 "found 2 input device node(s), but none were readable; check permissions for /dev/input/event*"
                     .to_string()
             )
+        );
+    }
+
+    #[test]
+    fn discovery_issue_reports_open_failures_when_causes_are_mixed() {
+        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
+        result.stats.event_nodes = 2;
+        result.stats.record_open_error(
+            "/dev/input/event0",
+            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
+        );
+        result.stats.record_open_error(
+            "/dev/input/event1",
+            io::Error::new(io::ErrorKind::NotFound, "device disappeared"),
+        );
+
+        assert_eq!(
+            result.issue(),
+            Some(DiscoveryIssue::OpenFailed {
+                skipped: 2,
+                path: PathBuf::from("/dev/input/event1"),
+                message: "device disappeared".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn discovery_issue_prefers_open_failures_over_partial_read_dir_errors() {
+        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
+        result.stats.event_nodes = 1;
+        result.stats.record_read_dir_error(
+            "/dev/input",
+            io::Error::new(io::ErrorKind::Interrupted, "retry"),
+        );
+        result.stats.record_open_error(
+            "/dev/input/event0",
+            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
+        );
+
+        assert_eq!(
+            result.issue(),
+            Some(DiscoveryIssue::PermissionDenied { skipped: 1 })
         );
     }
 
@@ -697,9 +775,9 @@ mod tests {
             Ok(path.display().to_string())
         });
 
-        assert_eq!(result.event_nodes, 2);
-        assert_eq!(result.skipped, 1);
-        assert!(result.had_read_dir_error);
+        assert_eq!(result.stats.event_nodes, 2);
+        assert_eq!(result.stats.total_open_failures(), 1);
+        assert_eq!(result.stats.read_dir_failed, 1);
         assert_eq!(result.devices, vec!["/dev/input/event0".to_string()]);
     }
 
