@@ -5,7 +5,7 @@ use std::{
 };
 
 use crossterm::event::{
-    Event, EventStream as TermEventStream, KeyCode, KeyEventKind, KeyModifiers,
+    Event, EventStream as TermEventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
 };
 use evdev::Device;
 use futures::StreamExt;
@@ -156,6 +156,82 @@ struct DiscoveryResult<T> {
     stats: DiscoveryStats,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectorMode {
+    Browsing,
+    Help,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectorCommand {
+    Exit,
+    Back,
+    ToggleHelp,
+    Refresh,
+    Select,
+    ClearSearch,
+    DeleteChar,
+    AddChar(char),
+    MoveUp,
+    MoveDown,
+    PageUp,
+    PageDown,
+    Home,
+    End,
+    None,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SelectionAction {
+    Refresh,
+    Open(usize),
+}
+
+fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
+    match mode {
+        SelectorMode::Help => match key.code {
+            KeyCode::Esc | KeyCode::Char('?') => SelectorCommand::ToggleHelp,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::Exit
+            }
+            _ => SelectorCommand::None,
+        },
+        SelectorMode::Browsing => match key.code {
+            KeyCode::Enter => SelectorCommand::Select,
+            KeyCode::Esc => SelectorCommand::Back,
+            KeyCode::Char('?') => SelectorCommand::ToggleHelp,
+            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::Exit
+            }
+            KeyCode::Up => SelectorCommand::MoveUp,
+            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::MoveUp
+            }
+            KeyCode::Down => SelectorCommand::MoveDown,
+            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::MoveDown
+            }
+            KeyCode::PageUp => SelectorCommand::PageUp,
+            KeyCode::PageDown => SelectorCommand::PageDown,
+            KeyCode::Home => SelectorCommand::Home,
+            KeyCode::End => SelectorCommand::End,
+            KeyCode::Backspace => SelectorCommand::DeleteChar,
+            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::ClearSearch
+            }
+            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                SelectorCommand::Refresh
+            }
+            KeyCode::Char(c)
+                if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
+            {
+                SelectorCommand::AddChar(c)
+            }
+            _ => SelectorCommand::None,
+        },
+    }
+}
+
 impl<T> DiscoveryResult<T> {
     fn new() -> Self {
         Self {
@@ -257,7 +333,7 @@ pub struct DeviceSelector {
     search_query: String,
     matcher: SkimMatcherV2,
     error_message: Option<String>,
-    help_visible: bool,
+    mode: SelectorMode,
     help_lines: Vec<String>,
 }
 
@@ -275,7 +351,7 @@ impl DeviceSelector {
             search_query: String::new(),
             matcher: SkimMatcherV2::default(),
             error_message: error_message.or(discovery_message),
-            help_visible: false,
+            mode: SelectorMode::Browsing,
             help_lines: Self::help_lines(),
         }
     }
@@ -372,84 +448,8 @@ impl DeviceSelector {
 
             match term_events.next().await {
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
-                    if selector.help_visible {
-                        match key.code {
-                            KeyCode::Esc | KeyCode::Char('?') => {
-                                selector.help_visible = false;
-                            }
-                            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                                return Ok(State::Exit);
-                            }
-                            _ => {}
-                        }
-                        continue;
-                    }
-                    if selector.error_message.is_some() {
-                        selector.error_message = None;
-                    }
-                    match key.code {
-                        KeyCode::Char('?') => {
-                            selector.toggle_help();
-                        }
-                        KeyCode::Enter => {
-                            if selector.filtered_indexes.is_empty() {
-                                selector.refresh_devices();
-                                continue;
-                            }
-                            if let Some(&index) = selector
-                                .filtered_indexes
-                                .get(selector.selected_filtered_index)
-                            {
-                                return Ok(State::Monitor(Box::new(
-                                    selector.devices.swap_remove(index),
-                                )));
-                            }
-                        }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            return Ok(State::Exit);
-                        }
-                        KeyCode::Esc => {
-                            if selector.search_query.is_empty() {
-                                return Ok(State::Exit);
-                            } else {
-                                selector.clear_search();
-                            }
-                        }
-                        KeyCode::Up => {
-                            selector.navigate_up();
-                        }
-                        KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            selector.navigate_up();
-                        }
-                        KeyCode::Down => {
-                            selector.navigate_down();
-                        }
-                        KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            selector.navigate_down();
-                        }
-                        KeyCode::PageUp => {
-                            selector.navigate_page(-1);
-                        }
-                        KeyCode::PageDown => {
-                            selector.navigate_page(1);
-                        }
-                        KeyCode::Home => selector.select_home(),
-                        KeyCode::End => selector.select_end(),
-                        KeyCode::Backspace => {
-                            selector.remove_char();
-                        }
-                        KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            selector.clear_search();
-                        }
-                        KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                            selector.refresh_devices();
-                        }
-                        KeyCode::Char(c)
-                            if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
-                        {
-                            selector.add_char(c);
-                        }
-                        _ => {}
+                    if let Some(state) = selector.handle_key_press(key) {
+                        return Ok(state);
                     }
                 }
                 Some(Ok(_)) => {}
@@ -474,46 +474,92 @@ impl DeviceSelector {
         self.selected_filtered_index = 0;
     }
 
-    fn navigate_up(&mut self) {
-        if !self.filtered_indexes.is_empty() && self.selected_filtered_index > 0 {
-            self.selected_filtered_index -= 1;
+    fn handle_key_press(&mut self, key: KeyEvent) -> Option<State> {
+        let mode = self.mode;
+        if mode == SelectorMode::Browsing {
+            self.error_message = None;
+        }
+        self.apply_command(command_for(key, mode))
+    }
+
+    fn apply_command(&mut self, command: SelectorCommand) -> Option<State> {
+        match command {
+            SelectorCommand::Exit => Some(State::Exit),
+            SelectorCommand::Back => self.back(),
+            SelectorCommand::ToggleHelp => {
+                self.toggle_help();
+                None
+            }
+            SelectorCommand::Refresh => {
+                self.refresh_devices();
+                None
+            }
+            SelectorCommand::Select => self.select_or_refresh(),
+            SelectorCommand::ClearSearch => {
+                self.clear_search();
+                None
+            }
+            SelectorCommand::DeleteChar => {
+                self.remove_char();
+                None
+            }
+            SelectorCommand::AddChar(c) => {
+                self.add_char(c);
+                None
+            }
+            SelectorCommand::MoveUp => {
+                self.move_selection_by(-1);
+                None
+            }
+            SelectorCommand::MoveDown => {
+                self.move_selection_by(1);
+                None
+            }
+            SelectorCommand::PageUp => {
+                self.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
+                None
+            }
+            SelectorCommand::PageDown => {
+                self.move_selection_by(PAGE_SCROLL_SIZE as i32);
+                None
+            }
+            SelectorCommand::Home => {
+                self.select_index(0);
+                None
+            }
+            SelectorCommand::End => {
+                if let Some(last_index) = self.filtered_indexes.len().checked_sub(1) {
+                    self.select_index(last_index);
+                }
+                None
+            }
+            SelectorCommand::None => None,
         }
     }
 
-    fn navigate_down(&mut self) {
-        if !self.filtered_indexes.is_empty()
-            && self.selected_filtered_index < self.filtered_indexes.len() - 1
-        {
-            self.selected_filtered_index += 1;
+    fn back(&mut self) -> Option<State> {
+        if self.search_query.is_empty() {
+            Some(State::Exit)
+        } else {
+            self.clear_search();
+            None
         }
     }
 
-    fn navigate_page(&mut self, dir: i32) {
-        if self.filtered_indexes.is_empty() {
+    fn move_selection_by(&mut self, delta: i32) {
+        let len = self.filtered_indexes.len();
+        if len == 0 || delta == 0 {
             return;
         }
-        let len = self.filtered_indexes.len();
-        if dir < 0 {
-            self.selected_filtered_index = self
-                .selected_filtered_index
-                .saturating_sub(PAGE_SCROLL_SIZE);
-        } else if dir > 0 {
-            let target = self
-                .selected_filtered_index
-                .saturating_add(PAGE_SCROLL_SIZE);
-            self.selected_filtered_index = target.min(len - 1);
-        }
+
+        let max_index = len - 1;
+        let target = self.selected_filtered_index as i32 + delta;
+        self.selected_filtered_index = target.clamp(0, max_index as i32) as usize;
     }
 
-    fn select_home(&mut self) {
-        if !self.filtered_indexes.is_empty() {
-            self.selected_filtered_index = 0;
-        }
-    }
-
-    fn select_end(&mut self) {
-        if !self.filtered_indexes.is_empty() {
-            self.selected_filtered_index = self.filtered_indexes.len() - 1;
+    fn select_index(&mut self, index: usize) {
+        if let Some(max_index) = self.filtered_indexes.len().checked_sub(1) {
+            self.selected_filtered_index = index.min(max_index);
         }
     }
 
@@ -532,6 +578,30 @@ impl DeviceSelector {
         self.update_filter();
     }
 
+    fn selection_action(&self) -> Option<SelectionAction> {
+        if self.filtered_indexes.is_empty() {
+            return Some(SelectionAction::Refresh);
+        }
+
+        self.filtered_indexes
+            .get(self.selected_filtered_index)
+            .copied()
+            .map(SelectionAction::Open)
+    }
+
+    fn select_or_refresh(&mut self) -> Option<State> {
+        match self.selection_action() {
+            Some(SelectionAction::Refresh) => {
+                self.refresh_devices();
+                None
+            }
+            Some(SelectionAction::Open(index)) => {
+                Some(State::Monitor(Box::new(self.devices.swap_remove(index))))
+            }
+            None => None,
+        }
+    }
+
     fn help_lines() -> Vec<String> {
         vec![
             "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End".to_string(),
@@ -544,7 +614,10 @@ impl DeviceSelector {
     }
 
     fn toggle_help(&mut self) {
-        self.help_visible = !self.help_visible;
+        self.mode = match self.mode {
+            SelectorMode::Browsing => SelectorMode::Help,
+            SelectorMode::Help => SelectorMode::Browsing,
+        };
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
@@ -634,7 +707,7 @@ impl DeviceSelector {
     }
 
     fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
-        if !self.help_visible {
+        if self.mode != SelectorMode::Help {
             return;
         }
         let popup = Popup {
@@ -656,9 +729,13 @@ impl DeviceSelector {
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fuzzy_matcher::skim::SkimMatcherV2;
 
-    use super::{DeviceSelector, DiscoveryIssue, DiscoveryResult, filtered_indexes_by_query};
+    use super::{
+        DeviceSelector, DiscoveryIssue, DiscoveryResult, SelectionAction, SelectorCommand,
+        SelectorMode, State, command_for, filtered_indexes_by_query,
+    };
     use std::{
         io,
         path::{Path, PathBuf},
@@ -810,7 +887,7 @@ mod tests {
             search_query: "mouse".to_string(),
             matcher: SkimMatcherV2::default(),
             error_message: None,
-            help_visible: false,
+            mode: SelectorMode::Browsing,
             help_lines: Vec::new(),
         };
 
@@ -829,5 +906,121 @@ mod tests {
             Some("unable to read /dev/input: read denied".to_string())
         );
         assert_eq!(selector.search_query, "mouse");
+    }
+
+    fn key(code: KeyCode) -> KeyEvent {
+        KeyEvent::new(code, KeyModifiers::NONE)
+    }
+
+    fn shifted_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+    }
+
+    fn ctrl_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn selector_with(filtered_indexes: Vec<usize>, search_query: &str) -> DeviceSelector {
+        DeviceSelector {
+            devices: Vec::new(),
+            filtered_indexes,
+            selected_filtered_index: 0,
+            search_query: search_query.to_string(),
+            matcher: SkimMatcherV2::default(),
+            error_message: None,
+            mode: SelectorMode::Browsing,
+            help_lines: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn command_for_ctrl_c_exits_from_any_mode() {
+        for mode in [SelectorMode::Browsing, SelectorMode::Help] {
+            assert_eq!(command_for(ctrl_char('c'), mode), SelectorCommand::Exit);
+        }
+    }
+
+    #[test]
+    fn command_for_escape_depends_on_mode() {
+        assert_eq!(
+            command_for(key(KeyCode::Esc), SelectorMode::Browsing),
+            SelectorCommand::Back
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Esc), SelectorMode::Help),
+            SelectorCommand::ToggleHelp
+        );
+    }
+
+    #[test]
+    fn command_for_maps_navigation_keys_to_explicit_variants() {
+        assert_eq!(
+            command_for(key(KeyCode::Up), SelectorMode::Browsing),
+            SelectorCommand::MoveUp
+        );
+        assert_eq!(
+            command_for(ctrl_char('p'), SelectorMode::Browsing),
+            SelectorCommand::MoveUp
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Down), SelectorMode::Browsing),
+            SelectorCommand::MoveDown
+        );
+        assert_eq!(
+            command_for(ctrl_char('n'), SelectorMode::Browsing),
+            SelectorCommand::MoveDown
+        );
+        assert_eq!(
+            command_for(key(KeyCode::PageUp), SelectorMode::Browsing),
+            SelectorCommand::PageUp
+        );
+        assert_eq!(
+            command_for(key(KeyCode::PageDown), SelectorMode::Browsing),
+            SelectorCommand::PageDown
+        );
+    }
+
+    #[test]
+    fn command_for_only_adds_plain_and_shifted_characters() {
+        assert_eq!(
+            command_for(key(KeyCode::Char('a')), SelectorMode::Browsing),
+            SelectorCommand::AddChar('a')
+        );
+        assert_eq!(
+            command_for(shifted_char('A'), SelectorMode::Browsing),
+            SelectorCommand::AddChar('A')
+        );
+        assert_eq!(
+            command_for(
+                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT),
+                SelectorMode::Browsing
+            ),
+            SelectorCommand::None
+        );
+    }
+
+    #[test]
+    fn back_exits_only_when_search_is_empty() {
+        let mut selector = selector_with(vec![0], "mouse");
+
+        assert!(selector.back().is_none());
+        assert!(selector.search_query.is_empty());
+
+        assert!(matches!(selector.back(), Some(State::Exit)));
+    }
+
+    #[test]
+    fn selection_action_refreshes_when_no_results_exist() {
+        let selector = selector_with(Vec::new(), "");
+
+        assert_eq!(selector.selection_action(), Some(SelectionAction::Refresh));
+    }
+
+    #[test]
+    fn selection_action_uses_selected_filtered_index() {
+        let mut selector = selector_with(vec![2, 5, 7], "");
+        selector.selected_filtered_index = 1;
+
+        assert_eq!(selector.selection_action(), Some(SelectionAction::Open(5)));
     }
 }
