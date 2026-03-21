@@ -15,12 +15,15 @@ use ratatui::{
     buffer::Buffer,
     layout::{Alignment, Constraint, Layout, Rect},
     style::{Style, Stylize, palette::tailwind},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph, Widget, Wrap},
+    widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
 use super::State;
 use crate::{
-    device::popup::{Popup, render_popup},
+    device::{
+        popup::{Popup, render_popup},
+        widgets,
+    },
     error::{Error, ErrorArea, Result},
 };
 
@@ -37,6 +40,14 @@ const POPUP_MAX_WIDTH: u16 = 80;
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
+const HELP_LINES: &[&str] = &[
+    "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End",
+    "Select: Enter",
+    "Exit: Esc or Ctrl-C",
+    "Search: type to filter, Backspace, Ctrl-U clear",
+    "Refresh: Ctrl-R",
+    "Help: ? (press ? or Esc to close)",
+];
 const INPUT_DIR: &str = "/dev/input";
 const INPUT_EVENT_PREFIX: &[u8] = b"event";
 
@@ -334,7 +345,6 @@ pub struct DeviceSelector {
     matcher: SkimMatcherV2,
     error_message: Option<String>,
     mode: SelectorMode,
-    help_lines: Vec<String>,
 }
 
 impl DeviceSelector {
@@ -352,7 +362,6 @@ impl DeviceSelector {
             matcher: SkimMatcherV2::default(),
             error_message: error_message.or(discovery_message),
             mode: SelectorMode::Browsing,
-            help_lines: Self::help_lines(),
         }
     }
 
@@ -602,17 +611,6 @@ impl DeviceSelector {
         }
     }
 
-    fn help_lines() -> Vec<String> {
-        vec![
-            "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End".to_string(),
-            "Select: Enter".to_string(),
-            "Exit: Esc or Ctrl-C".to_string(),
-            "Search: type to filter, Backspace, Ctrl-U clear".to_string(),
-            "Refresh: Ctrl-R".to_string(),
-            "Help: ? (press ? or Esc to close)".to_string(),
-        ]
-    }
-
     fn toggle_help(&mut self) {
         self.mode = match self.mode {
             SelectorMode::Browsing => SelectorMode::Help,
@@ -647,13 +645,11 @@ impl DeviceSelector {
     fn render_search_box(&self, area: Rect, buf: &mut Buffer) {
         let search_text = format!(" {}_", self.search_query);
         Paragraph::new(search_text)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Search ")
-                    .title_alignment(Alignment::Center)
-                    .style(tailwind::BLUE.c300),
-            )
+            .block(widgets::styled_titled_block(
+                " Search ",
+                Style::new().fg(tailwind::BLUE.c300),
+                Alignment::Center,
+            ))
             .fg(TEXT_COLOR)
             .render(area, buf);
     }
@@ -665,13 +661,11 @@ impl DeviceSelector {
         });
 
         let list = List::new(items)
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title(" Devices ")
-                    .title_alignment(Alignment::Center)
-                    .style(tailwind::BLUE.c300),
-            )
+            .block(widgets::styled_titled_block(
+                " Devices ",
+                Style::new().fg(tailwind::BLUE.c300),
+                Alignment::Center,
+            ))
             .style(TEXT_COLOR)
             .highlight_style(Style::default().bg(tailwind::GRAY.c600))
             .highlight_symbol("> ");
@@ -690,40 +684,31 @@ impl DeviceSelector {
         let Some(message) = &self.error_message else {
             return;
         };
-        let popup = Popup {
-            title: " Error ",
-            lines: std::slice::from_ref(message),
-            min_width: POPUP_MIN_WIDTH,
-            min_height: POPUP_MIN_HEIGHT,
-            max_width: Some(POPUP_MAX_WIDTH),
-            max_height: None,
-            text_style: Style::new().fg(tailwind::RED.c400).bold(),
-            border_style: Style::new().fg(tailwind::RED.c400).bold(),
-            text_alignment: Alignment::Center,
-            title_alignment: Alignment::Center,
-            wrap: Wrap { trim: true },
-        };
-        render_popup(area, buf, &popup);
+        let lines = [message.as_str()];
+        let popup = Popup::new(" Error ")
+            .min_size(POPUP_MIN_WIDTH, POPUP_MIN_HEIGHT)
+            .max_width(POPUP_MAX_WIDTH)
+            .text_style(Style::new().fg(tailwind::RED.c400).bold())
+            .border_style(Style::new().fg(tailwind::RED.c400).bold())
+            .text_alignment(Alignment::Center)
+            .title_alignment(Alignment::Center)
+            .wrap(Wrap { trim: true });
+        render_popup(area, buf, &popup, &lines);
     }
 
     fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
         if self.mode != SelectorMode::Help {
             return;
         }
-        let popup = Popup {
-            title: " Help ",
-            lines: &self.help_lines,
-            min_width: HELP_POPUP_MIN_WIDTH,
-            min_height: HELP_POPUP_MIN_HEIGHT,
-            max_width: Some(HELP_POPUP_MAX_WIDTH),
-            max_height: None,
-            text_style: Style::new().fg(TEXT_COLOR),
-            border_style: Style::new().fg(tailwind::BLUE.c300).bold(),
-            text_alignment: Alignment::Left,
-            title_alignment: Alignment::Center,
-            wrap: Wrap { trim: false },
-        };
-        render_popup(area, buf, &popup);
+        let popup = Popup::new(" Help ")
+            .min_size(HELP_POPUP_MIN_WIDTH, HELP_POPUP_MIN_HEIGHT)
+            .max_width(HELP_POPUP_MAX_WIDTH)
+            .text_style(Style::new().fg(TEXT_COLOR))
+            .border_style(Style::new().fg(tailwind::BLUE.c300).bold())
+            .text_alignment(Alignment::Left)
+            .title_alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        render_popup(area, buf, &popup, HELP_LINES);
     }
 }
 
@@ -888,7 +873,6 @@ mod tests {
             matcher: SkimMatcherV2::default(),
             error_message: None,
             mode: SelectorMode::Browsing,
-            help_lines: Vec::new(),
         };
 
         let discovery = DiscoveryResult::read_dir_failed(
@@ -929,7 +913,6 @@ mod tests {
             matcher: SkimMatcherV2::default(),
             error_message: None,
             mode: SelectorMode::Browsing,
-            help_lines: Vec::new(),
         }
     }
 

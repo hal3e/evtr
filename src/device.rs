@@ -2,6 +2,7 @@ mod monitor;
 mod popup;
 mod selector;
 mod text;
+mod widgets;
 
 use std::mem;
 

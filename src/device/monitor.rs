@@ -17,7 +17,7 @@ use ratatui::{
     DefaultTerminal,
     buffer::Buffer,
     layout::{Alignment, Rect},
-    widgets::{Block, Borders, Paragraph, Widget, Wrap},
+    widgets::{Paragraph, Widget, Wrap},
 };
 use tokio::select;
 
@@ -38,6 +38,7 @@ use crate::{
     device::{
         popup::{Popup, render_popup},
         selector::DeviceInfo,
+        widgets,
     },
     error::{Error, ErrorArea, Result},
 };
@@ -45,6 +46,17 @@ use crate::{
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
+const HELP_POPUP_LINES: &[&str] = &[
+    "Scroll: Up/Down or j/k, PageUp/PageDown",
+    "Jump: Home/End or g/G",
+    "Reset: r (relative axes)",
+    "Info: i (press i or Esc to close)",
+    "Invert Y: y",
+    "Focus: Shift+J/Shift+K (when axes and buttons show)",
+    "Back: Esc (when no popup is open)",
+    "Exit app: Ctrl-C",
+    "Help: ? (press ? or Esc to close)",
+];
 
 pub(crate) enum MonitorExit {
     BackToSelector,
@@ -94,7 +106,6 @@ pub struct DeviceMonitor {
     // Counts adjusted to what is actually renderable in the current layout
     effective_counts: Counts,
     info_popup: DeviceInfoPopup,
-    help_popup: HelpPopup,
     active_popup: ActivePopup,
     touch: TouchState,
     focus: Focus,
@@ -176,28 +187,6 @@ impl DeviceInfoPopup {
         }
 
         Self { lines }
-    }
-}
-
-struct HelpPopup {
-    lines: Vec<String>,
-}
-
-impl HelpPopup {
-    fn new() -> Self {
-        Self {
-            lines: vec![
-                "Scroll: Up/Down or j/k, PageUp/PageDown".to_string(),
-                "Jump: Home/End or g/G".to_string(),
-                "Reset: r (relative axes)".to_string(),
-                "Info: i (press i or Esc to close)".to_string(),
-                "Invert Y: y".to_string(),
-                "Focus: Shift+J/Shift+K (when axes and buttons show)".to_string(),
-                "Back: Esc (when no popup is open)".to_string(),
-                "Exit app: Ctrl-C".to_string(),
-                "Help: ? (press ? or Esc to close)".to_string(),
-            ],
-        }
     }
 }
 
@@ -303,7 +292,6 @@ impl DeviceMonitor {
             device.physical_path(),
             &bootstrap.startup_warnings,
         );
-        let help_popup = HelpPopup::new();
         let device_stream = device.into_event_stream().map_err(|err| {
             Error::evdev(
                 ErrorArea::Monitor,
@@ -328,7 +316,6 @@ impl DeviceMonitor {
             effective_counts: counts,
             counts,
             info_popup,
-            help_popup,
             active_popup: ActivePopup::None,
             touch: bootstrap.touch,
             focus,
@@ -710,107 +697,70 @@ impl DeviceMonitor {
     }
 
     fn render_box(&self, area: Rect, focused: bool, title: &str, buf: &mut Buffer) -> Rect {
-        if area.height >= 2 && area.width >= 2 {
-            let style = if focused {
-                config::style_box_focused()
-            } else {
-                config::style_box_unfocused()
-            };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_alignment(Alignment::Left)
-                .border_style(style);
-            let inner = block.inner(area);
-            block.render(area, buf);
-            inner
+        let style = if focused {
+            config::style_box_focused()
         } else {
-            area
-        }
+            config::style_box_unfocused()
+        };
+        widgets::render_bordered_titled_box(area, title, style, Alignment::Left, buf)
     }
 
     fn render_touchpad_box(&self, area: Rect, buf: &mut Buffer) -> Rect {
-        if area.height >= 2 && area.width >= 2 {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(" Touchpad ")
-                .title_alignment(Alignment::Left)
-                .border_style(config::style_box_unfocused());
-            let inner = block.inner(area);
-            block.render(area, buf);
-            inner
-        } else {
-            area
-        }
+        widgets::render_bordered_titled_box(
+            area,
+            " Touchpad ",
+            config::style_box_unfocused(),
+            Alignment::Left,
+            buf,
+        )
     }
 
     fn render_joystick_box(&self, area: Rect, count: usize, buf: &mut Buffer) -> Rect {
-        if area.height >= 2 && area.width >= 2 {
-            let title = if count > 1 {
-                " Joysticks "
-            } else {
-                " Joystick "
-            };
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(title)
-                .title_alignment(Alignment::Left)
-                .border_style(config::style_box_unfocused());
-            let inner = block.inner(area);
-            block.render(area, buf);
-            inner
+        let title = if count > 1 {
+            " Joysticks "
         } else {
-            area
-        }
+            " Joystick "
+        };
+        widgets::render_bordered_titled_box(
+            area,
+            title,
+            config::style_box_unfocused(),
+            Alignment::Left,
+            buf,
+        )
     }
 
     fn render_hat_box(&self, area: Rect, buf: &mut Buffer) -> Rect {
-        if area.height >= 2 && area.width >= 2 {
-            let block = Block::default()
-                .borders(Borders::ALL)
-                .title(" D-pad ")
-                .title_alignment(Alignment::Left)
-                .border_style(config::style_box_unfocused());
-            let inner = block.inner(area);
-            block.render(area, buf);
-            inner
-        } else {
-            area
-        }
+        widgets::render_bordered_titled_box(
+            area,
+            " D-pad ",
+            config::style_box_unfocused(),
+            Alignment::Left,
+            buf,
+        )
     }
 
     fn render_info_popup(&self, area: Rect, buf: &mut Buffer) {
-        let popup = Popup {
-            title: " Device Info ",
-            lines: &self.info_popup.lines,
-            min_width: 20,
-            min_height: 5,
-            max_width: None,
-            max_height: None,
-            text_style: config::style_label(),
-            border_style: config::style_box_focused(),
-            text_alignment: Alignment::Left,
-            title_alignment: Alignment::Center,
-            wrap: Wrap { trim: false },
-        };
-        render_popup(area, buf, &popup);
+        let popup = Popup::new(" Device Info ")
+            .min_size(20, 5)
+            .text_style(config::style_label())
+            .border_style(config::style_box_focused())
+            .text_alignment(Alignment::Left)
+            .title_alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        render_popup(area, buf, &popup, &self.info_popup.lines);
     }
 
     fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
-        let popup = Popup {
-            title: " Help ",
-            lines: &self.help_popup.lines,
-            min_width: HELP_POPUP_MIN_WIDTH,
-            min_height: HELP_POPUP_MIN_HEIGHT,
-            max_width: Some(HELP_POPUP_MAX_WIDTH),
-            max_height: None,
-            text_style: config::style_label(),
-            border_style: config::style_box_focused(),
-            text_alignment: Alignment::Left,
-            title_alignment: Alignment::Center,
-            wrap: Wrap { trim: false },
-        };
-        render_popup(area, buf, &popup);
+        let popup = Popup::new(" Help ")
+            .min_size(HELP_POPUP_MIN_WIDTH, HELP_POPUP_MIN_HEIGHT)
+            .max_width(HELP_POPUP_MAX_WIDTH)
+            .text_style(config::style_label())
+            .border_style(config::style_box_focused())
+            .text_alignment(Alignment::Left)
+            .title_alignment(Alignment::Center)
+            .wrap(Wrap { trim: false });
+        render_popup(area, buf, &popup, HELP_POPUP_LINES);
     }
 
     fn axis_offsets(&self) -> (usize, usize) {
