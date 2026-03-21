@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::HashMap;
 
 use evdev::{
     AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, RelativeAxisCode,
@@ -6,14 +6,14 @@ use evdev::{
 
 use crate::device::monitor::{ComponentBootstrap, config, math};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum InputTypeId {
     Abs,
     Rel,
     Key,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) struct InputId {
     pub(crate) kind: InputTypeId,
     pub(crate) code: u16,
@@ -25,7 +25,7 @@ pub(crate) enum AbsoluteState {
     Fallback { min: i32, max: i32, value: i32 },
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) enum InputKind {
     Absolute(AbsoluteState),
     Relative(i32),
@@ -82,18 +82,20 @@ pub(crate) struct DeviceInput {
     pub(crate) input_type: InputKind,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AbsoluteAxis {
     pub(crate) min: i32,
     pub(crate) max: i32,
     pub(crate) value: i32,
 }
 
-pub(crate) type InputsVec<'a> = Vec<&'a DeviceInput>;
-pub(crate) type InputSlice<'a> = &'a [&'a DeviceInput];
+pub(crate) type InputSlice<'a> = &'a [DeviceInput];
 
 pub(crate) struct InputCollection {
-    inputs: BTreeMap<InputId, DeviceInput>,
+    absolute: Vec<DeviceInput>,
+    relative: Vec<DeviceInput>,
+    buttons: Vec<DeviceInput>,
+    by_event: HashMap<InputId, InputLocation>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,9 +105,18 @@ struct AxisSnapshot {
     value: i32,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum InputLocation {
+    Absolute(usize),
+    Relative(usize),
+    Button(usize),
+}
+
 impl InputCollection {
     pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
-        let mut inputs = BTreeMap::new();
+        let mut absolute = Vec::new();
+        let mut relative = Vec::new();
+        let mut buttons = Vec::new();
         let mut startup_warnings = Vec::new();
 
         let abs_state = if device.supported_absolute_axes().is_some() {
@@ -140,8 +151,8 @@ impl InputCollection {
         if let Some(axes) = device.supported_absolute_axes() {
             for axis in axes.iter() {
                 let code = axis.0;
-                inputs.insert(
-                    InputId::absolute(code),
+                absolute.push((
+                    code,
                     DeviceInput {
                         name: format!("{:?}", AbsoluteAxisCode(code)).to_lowercase(),
                         input_type: InputKind::Absolute(absolute_state_from_snapshot(
@@ -154,7 +165,7 @@ impl InputCollection {
                             }),
                         )),
                     },
-                );
+                ));
             }
         }
 
@@ -162,13 +173,13 @@ impl InputCollection {
         if let Some(axes) = device.supported_relative_axes() {
             for axis in axes.iter() {
                 let code = axis.0;
-                inputs.insert(
-                    InputId::relative(code),
+                relative.push((
+                    code,
                     DeviceInput {
                         name: format!("{:?}", RelativeAxisCode(code)).to_lowercase(),
                         input_type: InputKind::Relative(0),
                     },
-                );
+                ));
             }
         }
 
@@ -179,32 +190,33 @@ impl InputCollection {
                     continue;
                 }
                 let code = key.0;
-                inputs.insert(
-                    InputId::key(code),
+                buttons.push((
+                    code,
                     DeviceInput {
                         name: strip_btn_prefix(&format!("{key:?}").to_lowercase()),
                         input_type: InputKind::Button(is_key_pressed(key, key_state.as_deref())),
                     },
-                );
+                ));
             }
         }
 
         ComponentBootstrap {
-            value: Self { inputs },
+            value: Self::from_entries(absolute, relative, buttons),
             startup_warnings,
         }
     }
 
     pub(crate) fn handle_event(&mut self, event: &InputEvent) {
         if let Some(id) = InputId::from_event(event)
-            && let Some(input) = self.inputs.get_mut(&id)
+            && let Some(location) = self.by_event.get(&id).copied()
+            && let Some(input) = self.input_mut(location)
         {
             input.input_type.update(event);
         }
     }
 
     pub(crate) fn reset_relative_axes(&mut self) {
-        for input in self.inputs.values_mut() {
+        for input in &mut self.relative {
             if let InputKind::Relative(v) = &mut input.input_type {
                 *v = 0;
             }
@@ -212,15 +224,15 @@ impl InputCollection {
     }
 
     pub(crate) fn absolute_axis(&self, code: AbsoluteAxisCode) -> Option<AbsoluteAxis> {
-        self.inputs
-            .get(&InputId::absolute(code.0))
-            .and_then(|input| match input.input_type {
-                InputKind::Absolute(AbsoluteState::Kernel { min, max, value })
-                | InputKind::Absolute(AbsoluteState::Fallback { min, max, value }) => {
-                    Some(AbsoluteAxis { min, max, value })
-                }
-                _ => None,
-            })
+        let location = self.by_event.get(&InputId::absolute(code.0)).copied()?;
+        let input = self.input(location)?;
+        match input.input_type {
+            InputKind::Absolute(AbsoluteState::Kernel { min, max, value })
+            | InputKind::Absolute(AbsoluteState::Fallback { min, max, value }) => {
+                Some(AbsoluteAxis { min, max, value })
+            }
+            _ => None,
+        }
     }
 
     pub(crate) fn absolute_axis_pair(
@@ -231,22 +243,79 @@ impl InputCollection {
         Some((self.absolute_axis(x)?, self.absolute_axis(y)?))
     }
 
-    pub(crate) fn iter_absolute(&self) -> impl Iterator<Item = &DeviceInput> {
-        self.inputs
-            .values()
-            .filter(|input| matches!(input.input_type, InputKind::Absolute(_)))
+    pub(crate) fn absolute_inputs(&self) -> &[DeviceInput] {
+        &self.absolute
     }
 
-    pub(crate) fn iter_relative(&self) -> impl Iterator<Item = &DeviceInput> {
-        self.inputs
-            .values()
-            .filter(|input| matches!(input.input_type, InputKind::Relative(_)))
+    pub(crate) fn relative_inputs(&self) -> &[DeviceInput] {
+        &self.relative
     }
 
-    pub(crate) fn iter_buttons(&self) -> impl Iterator<Item = &DeviceInput> {
-        self.inputs
-            .values()
-            .filter(|input| matches!(input.input_type, InputKind::Button(_)))
+    pub(crate) fn button_inputs(&self) -> &[DeviceInput] {
+        &self.buttons
+    }
+
+    fn from_entries(
+        absolute: Vec<(u16, DeviceInput)>,
+        relative: Vec<(u16, DeviceInput)>,
+        buttons: Vec<(u16, DeviceInput)>,
+    ) -> Self {
+        let mut by_event = HashMap::new();
+
+        let absolute = Self::sorted_inputs(
+            absolute,
+            InputId::absolute,
+            InputLocation::Absolute,
+            &mut by_event,
+        );
+        let relative = Self::sorted_inputs(
+            relative,
+            InputId::relative,
+            InputLocation::Relative,
+            &mut by_event,
+        );
+        let buttons =
+            Self::sorted_inputs(buttons, InputId::key, InputLocation::Button, &mut by_event);
+
+        Self {
+            absolute,
+            relative,
+            buttons,
+            by_event,
+        }
+    }
+
+    fn sorted_inputs(
+        mut entries: Vec<(u16, DeviceInput)>,
+        make_id: impl Fn(u16) -> InputId,
+        locate: impl Fn(usize) -> InputLocation,
+        by_event: &mut HashMap<InputId, InputLocation>,
+    ) -> Vec<DeviceInput> {
+        entries.sort_unstable_by_key(|(code, _)| *code);
+        entries
+            .into_iter()
+            .enumerate()
+            .map(|(index, (code, input))| {
+                by_event.insert(make_id(code), locate(index));
+                input
+            })
+            .collect()
+    }
+
+    fn input(&self, location: InputLocation) -> Option<&DeviceInput> {
+        match location {
+            InputLocation::Absolute(index) => self.absolute.get(index),
+            InputLocation::Relative(index) => self.relative.get(index),
+            InputLocation::Button(index) => self.buttons.get(index),
+        }
+    }
+
+    fn input_mut(&mut self, location: InputLocation) -> Option<&mut DeviceInput> {
+        match location {
+            InputLocation::Absolute(index) => self.absolute.get_mut(index),
+            InputLocation::Relative(index) => self.relative.get_mut(index),
+            InputLocation::Button(index) => self.buttons.get_mut(index),
+        }
     }
 }
 
@@ -321,11 +390,14 @@ fn strip_btn_prefix(name: &str) -> String {
 
 #[cfg(test)]
 mod tests {
-    use evdev::{AttributeSet, KeyCode};
+    use std::collections::HashMap;
+
+    use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
 
     use super::{
-        AbsoluteState, AxisSnapshot, InputId, InputTypeId, absolute_state_from_snapshot,
-        is_key_pressed, is_touch_contact_button,
+        AbsoluteState, AxisSnapshot, DeviceInput, InputCollection, InputId, InputKind,
+        InputLocation, InputTypeId, absolute_state_from_snapshot, is_key_pressed,
+        is_touch_contact_button,
     };
     use crate::device::monitor::config;
 
@@ -398,6 +470,173 @@ mod tests {
                 kind: InputTypeId::Key,
                 code: 3,
             }
+        );
+    }
+
+    fn absolute_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Absolute(AbsoluteState::Kernel {
+                min: -10,
+                max: 10,
+                value,
+            }),
+        }
+    }
+
+    fn relative_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Relative(value),
+        }
+    }
+
+    fn button_input(name: &str, pressed: bool) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Button(pressed),
+        }
+    }
+
+    #[test]
+    fn from_entries_preserves_sorted_category_order() {
+        let inputs = InputCollection::from_entries(
+            vec![
+                (4, absolute_input("abs_z", 0)),
+                (1, absolute_input("abs_x", 0)),
+            ],
+            vec![
+                (3, relative_input("rel_y", 0)),
+                (2, relative_input("rel_x", 0)),
+            ],
+            vec![
+                (9, button_input("east", false)),
+                (1, button_input("south", false)),
+            ],
+        );
+
+        assert_eq!(
+            inputs
+                .absolute_inputs()
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["abs_x", "abs_z"]
+        );
+        assert_eq!(
+            inputs
+                .relative_inputs()
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["rel_x", "rel_y"]
+        );
+        assert_eq!(
+            inputs
+                .button_inputs()
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["south", "east"]
+        );
+    }
+
+    #[test]
+    fn handle_event_routes_updates_to_each_category() {
+        let mut inputs = InputCollection::from_entries(
+            vec![(0, absolute_input("abs_x", 1))],
+            vec![(1, relative_input("rel_x", 2))],
+            vec![(2, button_input("south", false))],
+        );
+
+        inputs.handle_event(&InputEvent::new(EventType::ABSOLUTE.0, 0, 7));
+        inputs.handle_event(&InputEvent::new(EventType::RELATIVE.0, 1, 3));
+        inputs.handle_event(&InputEvent::new(EventType::KEY.0, 2, 1));
+
+        assert_eq!(
+            inputs.absolute_inputs()[0].input_type,
+            InputKind::Absolute(AbsoluteState::Kernel {
+                min: -10,
+                max: 10,
+                value: 7,
+            })
+        );
+        assert_eq!(
+            inputs.relative_inputs()[0].input_type,
+            InputKind::Relative(5)
+        );
+        assert_eq!(
+            inputs.button_inputs()[0].input_type,
+            InputKind::Button(true)
+        );
+    }
+
+    #[test]
+    fn reset_relative_axes_only_clears_relative_values() {
+        let mut inputs = InputCollection::from_entries(
+            vec![(0, absolute_input("abs_x", 4))],
+            vec![
+                (1, relative_input("rel_x", 5)),
+                (2, relative_input("rel_y", -2)),
+            ],
+            vec![(3, button_input("south", true))],
+        );
+
+        inputs.reset_relative_axes();
+
+        assert_eq!(
+            inputs
+                .relative_inputs()
+                .iter()
+                .map(|input| &input.input_type)
+                .collect::<Vec<_>>(),
+            vec![&InputKind::Relative(0), &InputKind::Relative(0)]
+        );
+        assert_eq!(
+            inputs.absolute_inputs()[0].input_type,
+            InputKind::Absolute(AbsoluteState::Kernel {
+                min: -10,
+                max: 10,
+                value: 4,
+            })
+        );
+        assert_eq!(
+            inputs.button_inputs()[0].input_type,
+            InputKind::Button(true)
+        );
+    }
+
+    #[test]
+    fn absolute_axis_pair_reads_absolute_inputs_from_event_index() {
+        let inputs = InputCollection {
+            absolute: vec![absolute_input("abs_x", 4), absolute_input("abs_y", -3)],
+            relative: Vec::new(),
+            buttons: Vec::new(),
+            by_event: HashMap::from([
+                (InputId::absolute(0), InputLocation::Absolute(0)),
+                (InputId::absolute(1), InputLocation::Absolute(1)),
+            ]),
+        };
+
+        let pair = inputs.absolute_axis_pair(
+            evdev::AbsoluteAxisCode::ABS_X,
+            evdev::AbsoluteAxisCode::ABS_Y,
+        );
+
+        assert_eq!(
+            pair,
+            Some((
+                super::AbsoluteAxis {
+                    min: -10,
+                    max: 10,
+                    value: 4,
+                },
+                super::AbsoluteAxis {
+                    min: -10,
+                    max: 10,
+                    value: -3,
+                }
+            ))
         );
     }
 }

@@ -24,7 +24,7 @@ use tokio::select;
 use self::{
     controls::Command,
     layout::{axes_layout, box_layout, main_layout, split_buttons_column},
-    model::{InputCollection, InputsVec},
+    model::InputCollection,
     render::{
         axis::AxisRenderer,
         buttons::ButtonGrid,
@@ -386,9 +386,9 @@ impl DeviceMonitor {
             )
         })?;
         let counts = Counts {
-            abs: bootstrap.inputs.iter_absolute().count(),
-            rel: bootstrap.inputs.iter_relative().count(),
-            btn: bootstrap.inputs.iter_buttons().count(),
+            abs: bootstrap.inputs.absolute_inputs().len(),
+            rel: bootstrap.inputs.relative_inputs().len(),
+            btn: bootstrap.inputs.button_inputs().len(),
         };
         let focus = if counts.total_axes() > 0 {
             Focus::Axes
@@ -752,17 +752,23 @@ impl DeviceMonitor {
             self.render_touchpad_box(box_area, buf);
         }
 
-        let abs_inputs: InputsVec = self.inputs.iter_absolute().collect();
-        let rel_inputs: InputsVec = self.inputs.iter_relative().collect();
-        let btn_inputs: InputsVec = self.inputs.iter_buttons().collect();
-
         let (abs_off, rel_off) = plan.axis_offsets();
         if let Some(abs_area) = plan.areas.abs {
-            AxisRenderer::render_axes_with_scroll(&abs_inputs, abs_area, abs_off, buf);
+            AxisRenderer::render_axes_with_scroll(
+                self.inputs.absolute_inputs(),
+                abs_area,
+                abs_off,
+                buf,
+            );
         }
 
         if let Some(rel_area) = plan.areas.rel {
-            AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
+            AxisRenderer::render_axes_with_scroll(
+                self.inputs.relative_inputs(),
+                rel_area,
+                rel_off,
+                buf,
+            );
         }
 
         if let (Some(touch_area), Some((x_range, y_range))) =
@@ -789,7 +795,12 @@ impl DeviceMonitor {
         }
 
         if let Some(btn_area) = plan.areas.buttons {
-            ButtonGrid::render_with_scroll(&btn_inputs, btn_area, plan.scroll.button_row, buf);
+            ButtonGrid::render_with_scroll(
+                self.inputs.button_inputs(),
+                btn_area,
+                plan.scroll.button_row,
+                buf,
+            );
         }
     }
 

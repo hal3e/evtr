@@ -214,13 +214,12 @@ mod tests {
     #[test]
     fn render_with_scroll_shows_partial_last_row() {
         let inputs = build_buttons((config::BUTTONS_PER_ROW * 2) + 1);
-        let refs: Vec<&DeviceInput> = inputs.iter().collect();
         let width = config::BUTTONS_PER_ROW as u16 * 6;
         let height = config::BTN_SECTION_VERT_PADDING + (config::BUTTON_HEIGHT * 2);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
 
-        ButtonGrid::render_with_scroll(&refs, area, 1, &mut buf);
+        ButtonGrid::render_with_scroll(&inputs, area, 1, &mut buf);
 
         assert!(buffer_contains(&buf, "b3"));
         assert!(buffer_contains(&buf, "b6"));
@@ -230,13 +229,12 @@ mod tests {
     #[test]
     fn render_with_scroll_offsets_by_button_row() {
         let inputs = build_buttons(config::BUTTONS_PER_ROW * 3);
-        let refs: Vec<&DeviceInput> = inputs.iter().collect();
         let width = config::BUTTONS_PER_ROW as u16 * 6;
         let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
 
-        ButtonGrid::render_with_scroll(&refs, area, 2, &mut buf);
+        ButtonGrid::render_with_scroll(&inputs, area, 2, &mut buf);
 
         assert!(buffer_contains(&buf, "b6"));
         assert!(!buffer_contains(&buf, "b3"));
@@ -246,13 +244,12 @@ mod tests {
     #[test]
     fn render_with_scroll_skips_when_too_narrow() {
         let inputs = build_buttons(config::BUTTONS_PER_ROW);
-        let refs: Vec<&DeviceInput> = inputs.iter().collect();
         let width = config::BUTTONS_PER_ROW as u16;
         let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
 
-        ButtonGrid::render_with_scroll(&refs, area, 0, &mut buf);
+        ButtonGrid::render_with_scroll(&inputs, area, 0, &mut buf);
 
         assert!(buffer_is_blank(&buf));
     }
@@ -260,12 +257,11 @@ mod tests {
     #[test]
     fn render_compact_buttons_in_single_line() {
         let inputs = build_buttons(config::BUTTONS_PER_ROW);
-        let refs: Vec<&DeviceInput> = inputs.iter().collect();
         let width = config::BUTTONS_PER_ROW as u16 * 3;
         let area = Rect::new(0, 0, width, 1);
         let mut buf = Buffer::empty(area);
 
-        ButtonGrid::render_with_scroll(&refs, area, 0, &mut buf);
+        ButtonGrid::render_with_scroll(&inputs, area, 0, &mut buf);
 
         assert!(buffer_contains(&buf, "b0"));
     }
