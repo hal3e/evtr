@@ -2,13 +2,9 @@ use std::{error, fmt, io};
 
 #[derive(Debug)]
 pub enum Error {
-    Io {
+    External {
         area: ErrorArea,
-        context: String,
-        source: io::Error,
-    },
-    Evdev {
-        area: ErrorArea,
+        source_kind: ExternalSourceKind,
         context: String,
         source: io::Error,
     },
@@ -28,18 +24,26 @@ pub(crate) enum ErrorArea {
     Monitor,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ExternalSourceKind {
+    Io,
+    Evdev,
+}
+
 impl Error {
     pub fn io(area: ErrorArea, context: impl Into<String>, source: io::Error) -> Self {
-        Self::Io {
+        Self::External {
             area,
+            source_kind: ExternalSourceKind::Io,
             context: context.into(),
             source,
         }
     }
 
     pub fn evdev(area: ErrorArea, context: impl Into<String>, source: io::Error) -> Self {
-        Self::Evdev {
+        Self::External {
             area,
+            source_kind: ExternalSourceKind::Evdev,
             context: context.into(),
             source,
         }
@@ -60,19 +64,24 @@ impl fmt::Display for ErrorArea {
     }
 }
 
+impl fmt::Display for ExternalSourceKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Io => write!(f, "i/o"),
+            Self::Evdev => write!(f, "evdev"),
+        }
+    }
+}
+
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Io {
+            Error::External {
                 area,
+                source_kind,
                 context,
                 source,
-            } => write!(f, "{area} i/o: {context}: {source}"),
-            Error::Evdev {
-                area,
-                context,
-                source,
-            } => write!(f, "{area} evdev: {context}: {source}"),
+            } => write!(f, "{area} {source_kind}: {context}: {source}"),
             Error::NoDevicesFound => write!(f, "no input devices found"),
             Error::StreamEnded { area, context } => write!(f, "{area} stream ended: {context}"),
         }
@@ -82,7 +91,7 @@ impl fmt::Display for Error {
 impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
-            Error::Io { source, .. } | Error::Evdev { source, .. } => Some(source),
+            Error::External { source, .. } => Some(source),
             Error::NoDevicesFound | Error::StreamEnded { .. } => None,
         }
     }
@@ -106,6 +115,21 @@ mod tests {
         assert_eq!(
             err.source().map(ToString::to_string),
             Some("denied".to_string())
+        );
+    }
+
+    #[test]
+    fn preserves_app_io_source() {
+        let err = Error::io(
+            ErrorArea::App,
+            "init terminal",
+            io::Error::new(io::ErrorKind::BrokenPipe, "closed"),
+        );
+
+        assert_eq!(err.to_string(), "app i/o: init terminal: closed");
+        assert_eq!(
+            err.source().map(ToString::to_string),
+            Some("closed".to_string())
         );
     }
 

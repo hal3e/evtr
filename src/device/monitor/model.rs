@@ -20,9 +20,37 @@ pub(crate) struct InputId {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AbsoluteState {
-    Kernel { min: i32, max: i32, value: i32 },
-    Fallback { min: i32, max: i32, value: i32 },
+pub(crate) enum AxisOrigin {
+    Kernel,
+    Fallback,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct AbsoluteState {
+    pub(crate) origin: AxisOrigin,
+    pub(crate) min: i32,
+    pub(crate) max: i32,
+    pub(crate) value: i32,
+}
+
+impl AbsoluteState {
+    pub(crate) fn kernel(min: i32, max: i32, value: i32) -> Self {
+        Self {
+            origin: AxisOrigin::Kernel,
+            min,
+            max,
+            value,
+        }
+    }
+
+    pub(crate) fn fallback(min: i32, max: i32, value: i32) -> Self {
+        Self {
+            origin: AxisOrigin::Fallback,
+            min,
+            max,
+            value,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -35,10 +63,7 @@ pub(crate) enum InputKind {
 impl InputKind {
     pub(crate) fn normalized(&self) -> f64 {
         match *self {
-            Self::Absolute(AbsoluteState::Kernel { min, max, value })
-            | Self::Absolute(AbsoluteState::Fallback { min, max, value }) => {
-                math::normalize_range(value, min, max)
-            }
+            Self::Absolute(state) => math::normalize_range(state.value, state.min, state.max),
             Self::Relative(value) => math::normalize_wrapped(value, config::RELATIVE_DISPLAY_RANGE),
             Self::Button(pressed) => (pressed as u8) as f64,
         }
@@ -46,8 +71,7 @@ impl InputKind {
 
     pub(crate) fn display_label(&self) -> String {
         match self {
-            Self::Absolute(AbsoluteState::Kernel { value, .. })
-            | Self::Absolute(AbsoluteState::Fallback { value, .. }) => value.to_string(),
+            Self::Absolute(state) => state.value.to_string(),
             Self::Relative(value) => {
                 math::wrapped_value(*value, config::RELATIVE_DISPLAY_RANGE).to_string()
             }
@@ -58,11 +82,7 @@ impl InputKind {
     pub(crate) fn update(&mut self, event: &InputEvent) {
         let value = event.value();
         match (self, event.event_type()) {
-            (
-                Self::Absolute(AbsoluteState::Kernel { value: current, .. })
-                | Self::Absolute(AbsoluteState::Fallback { value: current, .. }),
-                EventType::ABSOLUTE,
-            ) => *current = value,
+            (Self::Absolute(state), EventType::ABSOLUTE) => state.value = value,
             (Self::Relative(v), EventType::RELATIVE) => {
                 *v = v.saturating_add(value);
             }
@@ -227,10 +247,11 @@ impl InputCollection {
         let location = self.by_event.get(&InputId::absolute(code.0)).copied()?;
         let input = self.input(location)?;
         match input.input_type {
-            InputKind::Absolute(AbsoluteState::Kernel { min, max, value })
-            | InputKind::Absolute(AbsoluteState::Fallback { min, max, value }) => {
-                Some(AbsoluteAxis { min, max, value })
-            }
+            InputKind::Absolute(state) => Some(AbsoluteAxis {
+                min: state.min,
+                max: state.max,
+                value: state.value,
+            }),
             _ => None,
         }
     }
@@ -350,17 +371,13 @@ impl InputId {
 
 fn absolute_state_from_snapshot(snapshot: Option<AxisSnapshot>) -> AbsoluteState {
     if let Some(snapshot) = snapshot {
-        AbsoluteState::Kernel {
-            min: snapshot.min,
-            max: snapshot.max,
-            value: snapshot.value,
-        }
+        AbsoluteState::kernel(snapshot.min, snapshot.max, snapshot.value)
     } else {
-        AbsoluteState::Fallback {
-            min: config::DEFAULT_AXIS_RANGE.0,
-            max: config::DEFAULT_AXIS_RANGE.1,
-            value: 0,
-        }
+        AbsoluteState::fallback(
+            config::DEFAULT_AXIS_RANGE.0,
+            config::DEFAULT_AXIS_RANGE.1,
+            0,
+        )
     }
 }
 
@@ -395,7 +412,7 @@ mod tests {
     use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
 
     use super::{
-        AbsoluteState, AxisSnapshot, DeviceInput, InputCollection, InputId, InputKind,
+        AbsoluteState, AxisOrigin, AxisSnapshot, DeviceInput, InputCollection, InputId, InputKind,
         InputLocation, InputTypeId, absolute_state_from_snapshot, is_key_pressed,
         is_touch_contact_button,
     };
@@ -409,11 +426,7 @@ mod tests {
                 max: 20,
                 value: 7,
             })),
-            AbsoluteState::Kernel {
-                min: -10,
-                max: 20,
-                value: 7,
-            }
+            AbsoluteState::kernel(-10, 20, 7)
         );
     }
 
@@ -421,11 +434,20 @@ mod tests {
     fn absolute_state_from_snapshot_uses_explicit_fallback_defaults() {
         assert_eq!(
             absolute_state_from_snapshot(None),
-            AbsoluteState::Fallback {
-                min: config::DEFAULT_AXIS_RANGE.0,
-                max: config::DEFAULT_AXIS_RANGE.1,
-                value: 0,
-            }
+            AbsoluteState::fallback(
+                config::DEFAULT_AXIS_RANGE.0,
+                config::DEFAULT_AXIS_RANGE.1,
+                0
+            )
+        );
+    }
+
+    #[test]
+    fn absolute_state_preserves_origin() {
+        assert_eq!(AbsoluteState::kernel(-1, 1, 0).origin, AxisOrigin::Kernel);
+        assert_eq!(
+            AbsoluteState::fallback(-1, 1, 0).origin,
+            AxisOrigin::Fallback
         );
     }
 
@@ -476,11 +498,7 @@ mod tests {
     fn absolute_input(name: &str, value: i32) -> DeviceInput {
         DeviceInput {
             name: name.to_string(),
-            input_type: InputKind::Absolute(AbsoluteState::Kernel {
-                min: -10,
-                max: 10,
-                value,
-            }),
+            input_type: InputKind::Absolute(AbsoluteState::kernel(-10, 10, value)),
         }
     }
 
@@ -555,11 +573,7 @@ mod tests {
 
         assert_eq!(
             inputs.absolute_inputs()[0].input_type,
-            InputKind::Absolute(AbsoluteState::Kernel {
-                min: -10,
-                max: 10,
-                value: 7,
-            })
+            InputKind::Absolute(AbsoluteState::kernel(-10, 10, 7))
         );
         assert_eq!(
             inputs.relative_inputs()[0].input_type,
@@ -594,11 +608,7 @@ mod tests {
         );
         assert_eq!(
             inputs.absolute_inputs()[0].input_type,
-            InputKind::Absolute(AbsoluteState::Kernel {
-                min: -10,
-                max: 10,
-                value: 4,
-            })
+            InputKind::Absolute(AbsoluteState::kernel(-10, 10, 4))
         );
         assert_eq!(
             inputs.button_inputs()[0].input_type,
