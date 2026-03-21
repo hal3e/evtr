@@ -103,24 +103,12 @@ pub struct DeviceMonitor {
     inputs: InputCollection,
     identifier: String,
     counts: Counts,
-    // Counts adjusted to what is actually renderable in the current layout
-    effective_counts: Counts,
     info_popup: DeviceInfoPopup,
     active_popup: ActivePopup,
     touch: TouchState,
     focus: Focus,
     axis_scroll: usize,
     button_row_scroll: usize,
-    // Max scroll steps across axes (abs then rel).
-    axes_scroll_max: usize,
-    abs_max_start: usize,
-    rel_max_start: usize,
-    // Max starting row offset for buttons
-    button_row_max_start: usize,
-    axes_box_present: bool,
-    buttons_box_present: bool,
-    axes_overflow: bool,
-    buttons_overflow: bool,
     joystick_invert_y: bool,
 }
 
@@ -156,6 +144,104 @@ enum ActivePopup {
     None,
     Info,
     Help,
+}
+
+struct ScrollState {
+    axis: usize,
+    button_row: usize,
+}
+
+struct ScrollBounds {
+    axes_max: usize,
+    abs_max_start: usize,
+    rel_max_start: usize,
+    button_row_max_start: usize,
+    axes_overflow: bool,
+    buttons_overflow: bool,
+}
+
+impl ScrollBounds {
+    fn from_capacities(
+        effective_counts: Counts,
+        abs_visible_capacity: usize,
+        rel_visible_capacity: usize,
+        button_rows_capacity: usize,
+    ) -> Self {
+        let abs_max_start =
+            DeviceMonitor::aligned_window_start(effective_counts.abs, abs_visible_capacity, 1);
+        let rel_max_start =
+            DeviceMonitor::aligned_window_start(effective_counts.rel, rel_visible_capacity, 1);
+        let axes_max = abs_max_start + rel_max_start;
+        let axes_overflow = (abs_visible_capacity + rel_visible_capacity) > 0
+            && (effective_counts.abs > abs_visible_capacity
+                || effective_counts.rel > rel_visible_capacity);
+
+        let total_button_rows = effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
+        let button_row_max_start = if button_rows_capacity == 0 {
+            0
+        } else {
+            total_button_rows.saturating_sub(button_rows_capacity)
+        };
+        let buttons_overflow = button_rows_capacity > 0 && total_button_rows > button_rows_capacity;
+
+        Self {
+            axes_max,
+            abs_max_start,
+            rel_max_start,
+            button_row_max_start,
+            axes_overflow,
+            buttons_overflow,
+        }
+    }
+
+    fn axis_offsets(&self, effective_counts: Counts, axis_scroll: usize) -> (usize, usize) {
+        axis_offsets_for(
+            axis_scroll,
+            effective_counts.abs,
+            effective_counts.rel,
+            self.abs_max_start,
+            self.rel_max_start,
+        )
+    }
+}
+
+struct PlannedBoxes {
+    joystick: Option<Rect>,
+    hat: Option<Rect>,
+    axes: Option<Rect>,
+    touch: Option<Rect>,
+    buttons: Option<Rect>,
+}
+
+struct PlannedAreas {
+    joystick: Option<Rect>,
+    hat: Option<Rect>,
+    abs: Option<Rect>,
+    rel: Option<Rect>,
+    touch: Option<Rect>,
+    buttons: Option<Rect>,
+}
+
+struct RenderPlan {
+    focus: Focus,
+    scroll: ScrollState,
+    effective_counts: Counts,
+    scroll_bounds: ScrollBounds,
+    boxes: PlannedBoxes,
+    areas: PlannedAreas,
+    joystick: JoystickState,
+    hat_state: Option<HatState>,
+}
+
+impl RenderPlan {
+    fn focusable(&self) -> bool {
+        self.boxes.axes.is_some() && self.boxes.buttons.is_some()
+    }
+
+    fn axis_offsets(&self) -> (usize, usize) {
+        self.scroll_bounds
+            .axis_offsets(self.effective_counts, self.scroll.axis)
+    }
 }
 
 struct DeviceInfoPopup {
@@ -313,7 +399,6 @@ impl DeviceMonitor {
             device_stream,
             inputs: bootstrap.inputs,
             identifier,
-            effective_counts: counts,
             counts,
             info_popup,
             active_popup: ActivePopup::None,
@@ -321,14 +406,6 @@ impl DeviceMonitor {
             focus,
             axis_scroll: 0,
             button_row_scroll: 0,
-            axes_scroll_max: 0,
-            abs_max_start: 0,
-            rel_max_start: 0,
-            button_row_max_start: 0,
-            axes_box_present: false,
-            buttons_box_present: false,
-            axes_overflow: false,
-            buttons_overflow: false,
             joystick_invert_y: true,
         })
     }
@@ -349,18 +426,23 @@ impl DeviceMonitor {
                 event = term_events.next() => {
                     match event {
                         Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
+                            let area = terminal
+                                .size()
+                                .map(Rect::from)
+                                .map_err(|err| Error::io(ErrorArea::Monitor, "terminal size", err))?;
+                            let plan = monitor.sync_render_plan(area);
                             match command_for(key, monitor.active_popup) {
                                 Command::BackToSelector => {
                                     return Ok(MonitorExit::BackToSelector);
                                 }
                                 Command::ExitApp => return Ok(MonitorExit::ExitApp),
                                 Command::Reset => monitor.inputs.reset_relative_axes(),
-                                Command::Scroll(dir) => monitor.scroll_by(dir),
-                                Command::Page(dir) => monitor.scroll_page(dir),
-                                Command::Home => monitor.scroll_home(),
-                                Command::End => monitor.scroll_end(),
-                                Command::FocusNext => monitor.focus_next(),
-                                Command::FocusPrev => monitor.focus_prev(),
+                                Command::Scroll(dir) => monitor.scroll_by(dir, &plan),
+                                Command::Page(dir) => monitor.scroll_page(dir, &plan),
+                                Command::Home => monitor.scroll_home(&plan),
+                                Command::End => monitor.scroll_end(&plan),
+                                Command::FocusNext => monitor.focus_next(&plan),
+                                Command::FocusPrev => monitor.focus_prev(&plan),
                                 Command::ToggleInfo => monitor.toggle_info(),
                                 Command::ToggleHelp => monitor.toggle_help(),
                                 Command::ToggleInvertY => monitor.toggle_invert_y(),
@@ -398,45 +480,55 @@ impl DeviceMonitor {
         }
     }
 
-    fn scroll_by(&mut self, direction: i32) {
+    fn scroll_by(&mut self, direction: i32, plan: &RenderPlan) {
         if direction == 0 {
             return;
         }
-        match self.focus {
-            Focus::Axes => self.scroll_axes(direction),
-            Focus::Buttons => self.scroll_buttons(direction),
+        match plan.focus {
+            Focus::Axes => Self::step_scroll(
+                &mut self.axis_scroll,
+                direction,
+                plan.scroll_bounds.axes_overflow,
+                plan.scroll_bounds.axes_max,
+            ),
+            Focus::Buttons => Self::step_scroll(
+                &mut self.button_row_scroll,
+                direction,
+                plan.scroll_bounds.buttons_overflow,
+                plan.scroll_bounds.button_row_max_start,
+            ),
         }
     }
 
-    fn scroll_page(&mut self, direction: i32) {
+    fn scroll_page(&mut self, direction: i32, plan: &RenderPlan) {
         if direction == 0 {
             return;
         }
         for _ in 0..config::PAGE_SCROLL_STEPS {
-            self.scroll_by(direction);
+            self.scroll_by(direction, plan);
         }
     }
 
-    fn scroll_home(&mut self) {
-        match self.focus {
+    fn scroll_home(&mut self, plan: &RenderPlan) {
+        match plan.focus {
             Focus::Axes => self.axis_scroll = 0,
             Focus::Buttons => self.button_row_scroll = 0,
         }
     }
 
-    fn scroll_end(&mut self) {
-        match self.focus {
-            Focus::Axes => self.axis_scroll = self.axes_scroll_max,
-            Focus::Buttons => self.button_row_scroll = self.button_row_max_start,
+    fn scroll_end(&mut self, plan: &RenderPlan) {
+        match plan.focus {
+            Focus::Axes => self.axis_scroll = plan.scroll_bounds.axes_max,
+            Focus::Buttons => self.button_row_scroll = plan.scroll_bounds.button_row_max_start,
         }
     }
 
-    fn focus_next(&mut self) {
-        self.focus = next_focus(self.focus, self.focusable());
+    fn focus_next(&mut self, plan: &RenderPlan) {
+        self.focus = next_focus(plan.focus, plan.focusable());
     }
 
-    fn focus_prev(&mut self) {
-        self.focus_next();
+    fn focus_prev(&mut self, plan: &RenderPlan) {
+        self.focus_next(plan);
     }
 
     fn toggle_info(&mut self) {
@@ -447,45 +539,16 @@ impl DeviceMonitor {
         self.active_popup = toggled_popup(self.active_popup, ActivePopup::Help);
     }
 
-    fn focusable(&self) -> bool {
-        self.axes_box_present && self.buttons_box_present
-    }
-
-    fn sync_focus(&mut self) {
-        self.focus = synced_focus(self.focus, self.axes_box_present, self.buttons_box_present);
-    }
-
-    fn scroll_axes(&mut self, direction: i32) {
-        if !self.axes_overflow {
-            return;
-        }
-        if direction < 0 {
-            self.axis_scroll = self.axis_scroll.saturating_sub(1);
-        } else if direction > 0 {
-            self.axis_scroll = (self.axis_scroll + 1).min(self.axes_scroll_max);
-        }
-    }
-
-    fn scroll_buttons(&mut self, direction: i32) {
-        if !self.buttons_overflow {
-            return;
-        }
-        if direction < 0 {
-            self.button_row_scroll = self.button_row_scroll.saturating_sub(1);
-        } else if direction > 0 {
-            self.button_row_scroll = (self.button_row_scroll + 1).min(self.button_row_max_start);
-        }
-    }
-
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let [header, content] = main_layout(area);
+        let [header, _] = main_layout(area);
+        let plan = self.sync_render_plan(area);
 
         Paragraph::new(self.identifier.as_str())
             .style(config::style_header())
             .alignment(Alignment::Center)
             .render(header, buf);
 
-        self.render_content(content, buf);
+        self.render_content(&plan, buf);
 
         match self.active_popup {
             ActivePopup::None => {}
@@ -498,7 +561,8 @@ impl DeviceMonitor {
         self.joystick_invert_y = !self.joystick_invert_y;
     }
 
-    fn render_content(&mut self, area: Rect, buf: &mut Buffer) {
+    fn build_render_plan(&self, area: Rect) -> RenderPlan {
+        let [_, content] = main_layout(area);
         let counts = self.counts;
         let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
         let buttons_available = counts.btn > 0;
@@ -541,7 +605,7 @@ impl DeviceMonitor {
         }
 
         let (main_area, buttons_column) = split_buttons_column(
-            area,
+            content,
             buttons_available,
             main_min_width,
             config::BUTTONS_COLUMN_MIN_WIDTH,
@@ -581,27 +645,12 @@ impl DeviceMonitor {
         let hat_box = layout.hat_box;
         let axes_box = layout.axes_box;
         let touch_box = layout.touch_box;
-
-        self.axes_box_present = axes_box.is_some();
-        self.buttons_box_present = buttons_box.is_some();
-        self.sync_focus();
-
-        let axes_inner = axes_box.map(|box_area| {
-            self.render_box(box_area, matches!(self.focus, Focus::Axes), " Axes ", buf)
-        });
-        let joystick_area =
-            joystick_box.map(|box_area| self.render_joystick_box(box_area, joystick_count, buf));
-        let hat_area = hat_box.map(|box_area| self.render_hat_box(box_area, buf));
-        let buttons_area = buttons_box.map(|box_area| {
-            self.render_box(
-                box_area,
-                matches!(self.focus, Focus::Buttons),
-                " Buttons ",
-                buf,
-            )
-        });
-        let touch_area = touch_box.map(|box_area| self.render_touchpad_box(box_area, buf));
-
+        let focus = synced_focus(self.focus, axes_box.is_some(), buttons_box.is_some());
+        let axes_inner = axes_box.map(widgets::bordered_box_inner);
+        let joystick_area = joystick_box.map(widgets::bordered_box_inner);
+        let hat_area = hat_box.map(widgets::bordered_box_inner);
+        let buttons_area = buttons_box.map(widgets::bordered_box_inner);
+        let touch_area = touch_box.map(widgets::bordered_box_inner);
         let axes_sections = axes_inner.map(|inner| axes_layout(inner, counts.abs, counts.rel));
         let (abs_area, rel_area) = if let Some(sections) = axes_sections {
             (sections.abs_area, sections.rel_area)
@@ -626,51 +675,99 @@ impl DeviceMonitor {
         };
         let buttons_visible = button_rows_capacity > 0;
 
-        self.effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
-
-        self.abs_max_start =
-            Self::aligned_window_start(self.effective_counts.abs, abs_visible_capacity, 1);
-        self.rel_max_start =
-            Self::aligned_window_start(self.effective_counts.rel, rel_visible_capacity, 1);
-        self.axes_scroll_max = self.abs_max_start + self.rel_max_start;
-
-        if abs_visible_capacity + rel_visible_capacity == 0 {
-            self.axis_scroll = 0;
-        }
-        self.axis_scroll = self.axis_scroll.min(self.axes_scroll_max);
-
-        self.axes_overflow = (abs_visible_capacity + rel_visible_capacity) > 0
-            && (self.effective_counts.abs > abs_visible_capacity
-                || self.effective_counts.rel > rel_visible_capacity);
-
-        let total_button_rows = self.effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
-        self.button_row_max_start = if button_rows_capacity == 0 {
+        let effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
+        let scroll_bounds = ScrollBounds::from_capacities(
+            effective_counts,
+            abs_visible_capacity,
+            rel_visible_capacity,
+            button_rows_capacity,
+        );
+        let axis_scroll = if abs_visible_capacity + rel_visible_capacity == 0 {
             0
         } else {
-            total_button_rows.saturating_sub(button_rows_capacity)
+            self.axis_scroll.min(scroll_bounds.axes_max)
         };
-        if button_rows_capacity == 0 {
-            self.button_row_scroll = 0;
-        }
-        self.button_row_scroll = self.button_row_scroll.min(self.button_row_max_start);
+        let button_row_scroll = if button_rows_capacity == 0 {
+            0
+        } else {
+            self.button_row_scroll
+                .min(scroll_bounds.button_row_max_start)
+        };
 
-        self.buttons_overflow =
-            button_rows_capacity > 0 && total_button_rows > button_rows_capacity;
+        RenderPlan {
+            focus,
+            scroll: ScrollState {
+                axis: axis_scroll,
+                button_row: button_row_scroll,
+            },
+            effective_counts,
+            scroll_bounds,
+            boxes: PlannedBoxes {
+                joystick: joystick_box,
+                hat: hat_box,
+                axes: axes_box,
+                touch: touch_box,
+                buttons: buttons_box,
+            },
+            areas: PlannedAreas {
+                joystick: joystick_area,
+                hat: hat_area,
+                abs: abs_area,
+                rel: rel_area,
+                touch: touch_area,
+                buttons: buttons_area,
+            },
+            joystick,
+            hat_state,
+        }
+    }
+
+    fn sync_render_plan(&mut self, area: Rect) -> RenderPlan {
+        let plan = self.build_render_plan(area);
+        self.focus = plan.focus;
+        self.axis_scroll = plan.scroll.axis;
+        self.button_row_scroll = plan.scroll.button_row;
+        plan
+    }
+
+    fn render_content(&self, plan: &RenderPlan, buf: &mut Buffer) {
+        if let Some(box_area) = plan.boxes.axes {
+            self.render_box(box_area, matches!(plan.focus, Focus::Axes), " Axes ", buf);
+        }
+        if let Some(box_area) = plan.boxes.joystick {
+            self.render_joystick_box(box_area, plan.joystick.count(), buf);
+        }
+        if let Some(box_area) = plan.boxes.hat {
+            self.render_hat_box(box_area, buf);
+        }
+        if let Some(box_area) = plan.boxes.buttons {
+            self.render_box(
+                box_area,
+                matches!(plan.focus, Focus::Buttons),
+                " Buttons ",
+                buf,
+            );
+        }
+        if let Some(box_area) = plan.boxes.touch {
+            self.render_touchpad_box(box_area, buf);
+        }
 
         let abs_inputs: InputsVec = self.inputs.iter_absolute().collect();
         let rel_inputs: InputsVec = self.inputs.iter_relative().collect();
         let btn_inputs: InputsVec = self.inputs.iter_buttons().collect();
 
-        let (abs_off, rel_off) = self.axis_offsets();
-        if let Some(abs_area) = abs_area {
+        let (abs_off, rel_off) = plan.axis_offsets();
+        if let Some(abs_area) = plan.areas.abs {
             AxisRenderer::render_axes_with_scroll(&abs_inputs, abs_area, abs_off, buf);
         }
 
-        if let Some(rel_area) = rel_area {
+        if let Some(rel_area) = plan.areas.rel {
             AxisRenderer::render_axes_with_scroll(&rel_inputs, rel_area, rel_off, buf);
         }
 
-        if let (Some(touch_area), Some((x_range, y_range))) = (touch_area, self.touch.ranges()) {
+        if let (Some(touch_area), Some((x_range, y_range))) =
+            (plan.areas.touch, self.touch.ranges())
+        {
             let active_points = self.touch.active_points();
             let inactive_points = self.touch.inactive_points();
             TouchRenderer::render(
@@ -683,16 +780,16 @@ impl DeviceMonitor {
             );
         }
 
-        if let Some(joystick_area) = joystick_area {
-            JoystickRenderer::render(joystick_area, &joystick, self.joystick_invert_y, buf);
+        if let Some(joystick_area) = plan.areas.joystick {
+            JoystickRenderer::render(joystick_area, &plan.joystick, self.joystick_invert_y, buf);
         }
 
-        if let (Some(hat_area), Some(hat_state)) = (hat_area, hat_state) {
+        if let (Some(hat_area), Some(hat_state)) = (plan.areas.hat, plan.hat_state) {
             HatRenderer::render(hat_area, hat_state, buf);
         }
 
-        if let Some(btn_area) = buttons_area {
-            ButtonGrid::render_with_scroll(&btn_inputs, btn_area, self.button_row_scroll, buf);
+        if let Some(btn_area) = plan.areas.buttons {
+            ButtonGrid::render_with_scroll(&btn_inputs, btn_area, plan.scroll.button_row, buf);
         }
     }
 
@@ -763,22 +860,23 @@ impl DeviceMonitor {
         render_popup(area, buf, &popup, HELP_POPUP_LINES);
     }
 
-    fn axis_offsets(&self) -> (usize, usize) {
-        axis_offsets_for(
-            self.axis_scroll,
-            self.effective_counts.abs,
-            self.effective_counts.rel,
-            self.abs_max_start,
-            self.rel_max_start,
-        )
-    }
-
     fn buttons_visible_rows(&self, btn_area: Rect) -> usize {
         let metrics = ButtonGrid::metrics(btn_area);
         if metrics.renderable() {
             metrics.max_rows
         } else {
             0
+        }
+    }
+
+    fn step_scroll(offset: &mut usize, direction: i32, overflow: bool, max: usize) {
+        if !overflow {
+            return;
+        }
+        if direction < 0 {
+            *offset = offset.saturating_sub(1);
+        } else if direction > 0 {
+            *offset = (*offset + 1).min(max);
         }
     }
 

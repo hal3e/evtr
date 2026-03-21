@@ -41,9 +41,17 @@ pub(crate) fn render_bordered_titled_box(
     }
 
     let block = bordered_titled_block(title, border_style, title_alignment);
-    let inner = block.inner(area);
+    let inner = bordered_box_inner(area);
     block.render(area, buf);
     inner
+}
+
+pub(crate) fn bordered_box_inner(area: Rect) -> Rect {
+    if area.height >= 2 && area.width >= 2 {
+        Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2)
+    } else {
+        area
+    }
 }
 
 #[cfg(test)]
@@ -54,7 +62,7 @@ mod tests {
         style::Style,
     };
 
-    use super::render_bordered_titled_box;
+    use super::{bordered_box_inner, render_bordered_titled_box};
 
     #[test]
     fn render_bordered_titled_box_returns_inner_rect_for_renderable_area() {
@@ -76,5 +84,17 @@ mod tests {
             render_bordered_titled_box(area, " Box ", Style::default(), Alignment::Left, &mut buf);
 
         assert_eq!(inner, area);
+    }
+
+    #[test]
+    fn bordered_box_inner_shrinks_by_the_border_width() {
+        assert_eq!(
+            bordered_box_inner(Rect::new(0, 0, 8, 4)),
+            Rect::new(1, 1, 6, 2)
+        );
+        assert_eq!(
+            bordered_box_inner(Rect::new(0, 0, 1, 4)),
+            Rect::new(0, 0, 1, 4)
+        );
     }
 }
