@@ -10,19 +10,17 @@ mod theme;
 mod touch;
 mod ui;
 
-use crossterm::event::{
-    Event, EventStream as TermEventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use crossterm::event::{Event, EventStream as TermEventStream, KeyEventKind};
 use futures::StreamExt;
 use ratatui::{DefaultTerminal, buffer::Buffer, layout::Rect};
 use tokio::select;
 
 use self::{
-    controls::Command,
+    controls::{apply_command, command_for},
     model::InputCollection,
     plan::{Counts, RenderPlan, build_render_plan},
     render::frame::render_frame,
-    state::{ActivePopup, MonitorState, build_device_info_lines},
+    state::{MonitorState, build_device_info_lines},
     touch::TouchState,
 };
 use crate::{
@@ -78,44 +76,6 @@ pub struct DeviceMonitor {
     state: MonitorState,
 }
 
-fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
-    match popup {
-        ActivePopup::Info => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('i') => Command::ToggleInfo,
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Command::ExitApp
-            }
-            _ => Command::None,
-        },
-        ActivePopup::Help => match key_event.code {
-            KeyCode::Esc | KeyCode::Char('?') => Command::ToggleHelp,
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Command::ExitApp
-            }
-            _ => Command::None,
-        },
-        ActivePopup::None => match key_event.code {
-            KeyCode::Esc => Command::BackToSelector,
-            KeyCode::Char('c') if key_event.modifiers.contains(KeyModifiers::CONTROL) => {
-                Command::ExitApp
-            }
-            KeyCode::Char('r') => Command::Reset,
-            KeyCode::Home | KeyCode::Char('g') => Command::Home,
-            KeyCode::End | KeyCode::Char('G') => Command::End,
-            KeyCode::Up | KeyCode::Char('k') => Command::Scroll(-1),
-            KeyCode::Down | KeyCode::Char('j') => Command::Scroll(1),
-            KeyCode::Char('i') => Command::ToggleInfo,
-            KeyCode::Char('y') => Command::ToggleInvertY,
-            KeyCode::Char('?') => Command::ToggleHelp,
-            KeyCode::Char('J') => Command::FocusNext,
-            KeyCode::Char('K') => Command::FocusPrev,
-            KeyCode::PageUp => Command::Page(-1),
-            KeyCode::PageDown => Command::Page(1),
-            _ => Command::None,
-        },
-    }
-}
-
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
         let bootstrap = DeviceBootstrap::from_device(&device);
@@ -168,22 +128,13 @@ impl DeviceMonitor {
                                 .map(Rect::from)
                                 .map_err(|err| Error::io(ErrorArea::Monitor, "terminal size", err))?;
                             let plan = monitor.sync_render_plan(area);
-                            match command_for(key, monitor.state.active_popup()) {
-                                Command::BackToSelector => return Ok(MonitorExit::BackToSelector),
-                                Command::ExitApp => return Ok(MonitorExit::ExitApp),
-                                Command::Reset => monitor.inputs.reset_relative_axes(),
-                                Command::Scroll(dir) => monitor.state.scroll_by(dir, &plan),
-                                Command::Page(dir) => monitor
-                                    .state
-                                    .scroll_page(dir, &plan, config::PAGE_SCROLL_STEPS),
-                                Command::Home => monitor.state.scroll_home(&plan),
-                                Command::End => monitor.state.scroll_end(&plan),
-                                Command::FocusNext => monitor.state.focus_next(&plan),
-                                Command::FocusPrev => monitor.state.focus_prev(&plan),
-                                Command::ToggleInfo => monitor.state.toggle_info(),
-                                Command::ToggleHelp => monitor.state.toggle_help(),
-                                Command::ToggleInvertY => monitor.state.toggle_invert_y(),
-                                Command::None => {}
+                            if let Some(exit) = apply_command(
+                                command_for(key, monitor.state.active_popup()),
+                                &mut monitor.state,
+                                &mut monitor.inputs,
+                                &plan,
+                            ) {
+                                return Ok(exit);
                             }
                         }
                         Some(Ok(_)) => {}
@@ -234,44 +185,5 @@ impl DeviceMonitor {
         let plan = build_render_plan(area, &self.state, &self.inputs, &self.touch);
         self.state.sync_from_plan(&plan);
         plan
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
-
-    use super::{ActivePopup, command_for};
-    use crate::device::monitor::controls::Command;
-
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn ctrl_char(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
-    }
-
-    #[test]
-    fn command_for_ctrl_c_exits_from_any_popup_state() {
-        for popup in [ActivePopup::None, ActivePopup::Info, ActivePopup::Help] {
-            assert_eq!(command_for(ctrl_char('c'), popup), Command::ExitApp);
-        }
-    }
-
-    #[test]
-    fn command_for_escape_backs_out_only_without_popup() {
-        assert_eq!(
-            command_for(key(KeyCode::Esc), ActivePopup::None),
-            Command::BackToSelector
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Esc), ActivePopup::Info),
-            Command::ToggleInfo
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Esc), ActivePopup::Help),
-            Command::ToggleHelp
-        );
     }
 }

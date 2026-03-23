@@ -1,5 +1,8 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
+use super::{DeviceSelector, PAGE_SCROLL_SIZE};
+use crate::device::State;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SelectorMode {
     Browsing,
@@ -73,6 +76,64 @@ pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand 
             }
             _ => SelectorCommand::None,
         },
+    }
+}
+
+pub(crate) fn apply_command(
+    selector: &mut DeviceSelector,
+    command: SelectorCommand,
+) -> Option<State> {
+    match command {
+        SelectorCommand::Exit => Some(State::Exit),
+        SelectorCommand::Back => selector.back(),
+        SelectorCommand::ToggleHelp => {
+            selector.toggle_help();
+            None
+        }
+        SelectorCommand::Refresh => {
+            selector.refresh_devices();
+            None
+        }
+        SelectorCommand::Select => selector.select_or_refresh(),
+        SelectorCommand::ClearSearch => {
+            selector.clear_search();
+            None
+        }
+        SelectorCommand::DeleteChar => {
+            selector.remove_char();
+            None
+        }
+        SelectorCommand::AddChar(c) => {
+            selector.add_char(c);
+            None
+        }
+        SelectorCommand::MoveUp => {
+            selector.move_selection_by(-1);
+            None
+        }
+        SelectorCommand::MoveDown => {
+            selector.move_selection_by(1);
+            None
+        }
+        SelectorCommand::PageUp => {
+            selector.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
+            None
+        }
+        SelectorCommand::PageDown => {
+            selector.move_selection_by(PAGE_SCROLL_SIZE as i32);
+            None
+        }
+        SelectorCommand::Home => {
+            selector.select_index(0);
+            None
+        }
+        SelectorCommand::End => {
+            if let Some(last_index) = selector.filtered_indexes.len().checked_sub(1) {
+                selector.select_index(last_index);
+            }
+            None
+        }
+        SelectorCommand::None => None,
     }
 }
 

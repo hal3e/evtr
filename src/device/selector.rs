@@ -11,7 +11,7 @@ use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 use ratatui::DefaultTerminal;
 
 use self::{
-    commands::{SelectionAction, SelectorCommand, SelectorMode, command_for},
+    commands::{SelectionAction, SelectorMode, apply_command, command_for},
     discovery::{DiscoveryResult, discover_devices},
     view::render_selector,
 };
@@ -150,62 +150,7 @@ impl DeviceSelector {
         if mode == SelectorMode::Browsing {
             self.error_message = None;
         }
-        self.apply_command(command_for(key, mode))
-    }
-
-    fn apply_command(&mut self, command: SelectorCommand) -> Option<State> {
-        match command {
-            SelectorCommand::Exit => Some(State::Exit),
-            SelectorCommand::Back => self.back(),
-            SelectorCommand::ToggleHelp => {
-                self.toggle_help();
-                None
-            }
-            SelectorCommand::Refresh => {
-                self.refresh_devices();
-                None
-            }
-            SelectorCommand::Select => self.select_or_refresh(),
-            SelectorCommand::ClearSearch => {
-                self.clear_search();
-                None
-            }
-            SelectorCommand::DeleteChar => {
-                self.remove_char();
-                None
-            }
-            SelectorCommand::AddChar(c) => {
-                self.add_char(c);
-                None
-            }
-            SelectorCommand::MoveUp => {
-                self.move_selection_by(-1);
-                None
-            }
-            SelectorCommand::MoveDown => {
-                self.move_selection_by(1);
-                None
-            }
-            SelectorCommand::PageUp => {
-                self.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
-                None
-            }
-            SelectorCommand::PageDown => {
-                self.move_selection_by(PAGE_SCROLL_SIZE as i32);
-                None
-            }
-            SelectorCommand::Home => {
-                self.select_index(0);
-                None
-            }
-            SelectorCommand::End => {
-                if let Some(last_index) = self.filtered_indexes.len().checked_sub(1) {
-                    self.select_index(last_index);
-                }
-                None
-            }
-            SelectorCommand::None => None,
-        }
+        apply_command(self, command_for(key, mode))
     }
 
     fn back(&mut self) -> Option<State> {
