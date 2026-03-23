@@ -1,25 +1,19 @@
-use ratatui::style::{Color, Style, palette::tailwind};
+use ratatui::style::{Color, Style};
+
+use crate::device::theme;
 
 pub fn style_label() -> Style {
-    Style::new().fg(tailwind::SLATE.c200)
+    theme::style_text()
 }
 
 pub fn style_header() -> Style {
-    Style::new().fg(tailwind::SLATE.c200).bold()
+    theme::style_header()
 }
 
 pub fn style_gauge() -> Style {
-    Style::new().fg(tailwind::BLUE.c400)
+    theme::style_gauge()
 }
 
-pub fn style_box_focused() -> Style {
-    Style::new().fg(tailwind::BLUE.c300).bold()
-}
-
-pub fn style_box_unfocused() -> Style {
-    Style::new().fg(tailwind::SLATE.c500)
-}
-
-pub const COLOR_BUTTON_PRESSED: Color = tailwind::RED.c400;
-pub const COLOR_TOUCH_POINT: Color = tailwind::RED.c400;
-pub const COLOR_TOUCH_INACTIVE: Color = tailwind::SLATE.c500;
+pub const COLOR_BUTTON_PRESSED: Color = theme::DANGER_COLOR;
+pub const COLOR_TOUCH_POINT: Color = theme::DANGER_COLOR;
+pub const COLOR_TOUCH_INACTIVE: Color = theme::MUTED_COLOR;

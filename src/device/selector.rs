@@ -1,313 +1,29 @@
-use std::{
-    fs, io,
-    os::unix::ffi::OsStrExt,
-    path::{Path, PathBuf},
-};
+mod commands;
+mod discovery;
+mod view;
 
-use crossterm::event::{
-    Event, EventStream as TermEventStream, KeyCode, KeyEvent, KeyEventKind, KeyModifiers,
-};
+use std::{io, path::Path};
+
+use crossterm::event::{Event, EventStream as TermEventStream, KeyEvent, KeyEventKind};
 use evdev::Device;
 use futures::StreamExt;
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
-use ratatui::{
-    DefaultTerminal,
-    buffer::Buffer,
-    layout::{Alignment, Constraint, Layout, Rect},
-    style::{Style, Stylize, palette::tailwind},
-    widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
-};
+use ratatui::DefaultTerminal;
 
+use self::{
+    commands::{SelectionAction, SelectorCommand, SelectorMode, command_for},
+    discovery::{DiscoveryResult, discover_devices},
+    view::render_selector,
+};
 use super::State;
-use crate::{
-    device::{
-        popup::{Popup, render_popup},
-        widgets,
-    },
-    error::{Error, ErrorArea, Result},
-};
+use crate::error::{Error, ErrorArea, Result};
 
-const TEXT_COLOR: ratatui::style::Color = tailwind::SLATE.c200;
 const PAGE_SCROLL_SIZE: usize = 10;
-const LAYOUT_MARGIN_PCT: u16 = 20;
-const LAYOUT_CONTENT_WIDTH_PCT: u16 = 60;
-const TOP_PADDING_HEIGHT: u16 = 1;
-const SEARCH_BOX_HEIGHT: u16 = 3;
-const MAIN_MIN_HEIGHT: u16 = 3;
-const POPUP_MIN_WIDTH: u16 = 10;
-const POPUP_MIN_HEIGHT: u16 = 3;
-const POPUP_MAX_WIDTH: u16 = 80;
-const HELP_POPUP_MIN_WIDTH: u16 = 30;
-const HELP_POPUP_MIN_HEIGHT: u16 = 6;
-const HELP_POPUP_MAX_WIDTH: u16 = 80;
-const HELP_LINES: &[&str] = &[
-    "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End",
-    "Select: Enter",
-    "Exit: Esc or Ctrl-C",
-    "Search: type to filter, Backspace, Ctrl-U clear",
-    "Refresh: Ctrl-R",
-    "Help: ? (press ? or Esc to close)",
-];
-const INPUT_DIR: &str = "/dev/input";
-const INPUT_EVENT_PREFIX: &[u8] = b"event";
 
 #[derive(Debug)]
 pub struct DeviceInfo {
     pub device: Device,
     pub identifier: String,
-}
-
-#[derive(Debug)]
-struct DiscoveryError {
-    path: PathBuf,
-    message: String,
-}
-
-impl DiscoveryError {
-    fn new(path: impl Into<PathBuf>, err: io::Error) -> Self {
-        Self {
-            path: path.into(),
-            message: err.to_string(),
-        }
-    }
-}
-
-#[derive(Debug)]
-struct DiscoveryStats {
-    event_nodes: usize,
-    permission_denied: usize,
-    open_failed: usize,
-    read_dir_failed: usize,
-    sample_read_dir_error: Option<DiscoveryError>,
-    sample_open_error: Option<DiscoveryError>,
-}
-
-impl DiscoveryStats {
-    fn new() -> Self {
-        Self {
-            event_nodes: 0,
-            permission_denied: 0,
-            open_failed: 0,
-            read_dir_failed: 0,
-            sample_read_dir_error: None,
-            sample_open_error: None,
-        }
-    }
-
-    fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        self.read_dir_failed += 1;
-        if self.sample_read_dir_error.is_none() {
-            self.sample_read_dir_error = Some(DiscoveryError::new(path, err));
-        }
-    }
-
-    fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        let kind = err.kind();
-        if kind == io::ErrorKind::PermissionDenied {
-            self.permission_denied += 1;
-            return;
-        }
-
-        self.open_failed += 1;
-        if self.sample_open_error.is_none() {
-            self.sample_open_error = Some(DiscoveryError::new(path, err));
-        }
-    }
-
-    fn total_open_failures(&self) -> usize {
-        self.permission_denied + self.open_failed
-    }
-
-    fn issue(&self, has_devices: bool) -> Option<DiscoveryIssue> {
-        if has_devices {
-            return None;
-        }
-
-        if self.event_nodes == 0 {
-            return if let Some(error) = &self.sample_read_dir_error {
-                Some(DiscoveryIssue::ReadDir {
-                    path: error.path.clone(),
-                    message: error.message.clone(),
-                })
-            } else {
-                Some(DiscoveryIssue::NoDevicesFound)
-            };
-        }
-
-        let skipped = self.total_open_failures();
-        if skipped == 0 {
-            return self
-                .sample_read_dir_error
-                .as_ref()
-                .map(|error| DiscoveryIssue::ReadDir {
-                    path: error.path.clone(),
-                    message: error.message.clone(),
-                });
-        }
-
-        if self.open_failed == 0 {
-            return Some(DiscoveryIssue::PermissionDenied { skipped });
-        }
-
-        if let Some(error) = &self.sample_open_error {
-            return Some(DiscoveryIssue::OpenFailed {
-                skipped,
-                path: error.path.clone(),
-                message: error.message.clone(),
-            });
-        }
-
-        Some(DiscoveryIssue::NoDevicesFound)
-    }
-}
-
-#[derive(Debug)]
-struct DiscoveryResult<T> {
-    devices: Vec<T>,
-    stats: DiscoveryStats,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SelectorMode {
-    Browsing,
-    Help,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SelectorCommand {
-    Exit,
-    Back,
-    ToggleHelp,
-    Refresh,
-    Select,
-    ClearSearch,
-    DeleteChar,
-    AddChar(char),
-    MoveUp,
-    MoveDown,
-    PageUp,
-    PageDown,
-    Home,
-    End,
-    None,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum SelectionAction {
-    Refresh,
-    Open(usize),
-}
-
-fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
-    match mode {
-        SelectorMode::Help => match key.code {
-            KeyCode::Esc | KeyCode::Char('?') => SelectorCommand::ToggleHelp,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::Exit
-            }
-            _ => SelectorCommand::None,
-        },
-        SelectorMode::Browsing => match key.code {
-            KeyCode::Enter => SelectorCommand::Select,
-            KeyCode::Esc => SelectorCommand::Back,
-            KeyCode::Char('?') => SelectorCommand::ToggleHelp,
-            KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::Exit
-            }
-            KeyCode::Up => SelectorCommand::MoveUp,
-            KeyCode::Char('p') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::MoveUp
-            }
-            KeyCode::Down => SelectorCommand::MoveDown,
-            KeyCode::Char('n') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::MoveDown
-            }
-            KeyCode::PageUp => SelectorCommand::PageUp,
-            KeyCode::PageDown => SelectorCommand::PageDown,
-            KeyCode::Home => SelectorCommand::Home,
-            KeyCode::End => SelectorCommand::End,
-            KeyCode::Backspace => SelectorCommand::DeleteChar,
-            KeyCode::Char('u') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::ClearSearch
-            }
-            KeyCode::Char('r') if key.modifiers.contains(KeyModifiers::CONTROL) => {
-                SelectorCommand::Refresh
-            }
-            KeyCode::Char(c)
-                if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
-            {
-                SelectorCommand::AddChar(c)
-            }
-            _ => SelectorCommand::None,
-        },
-    }
-}
-
-impl<T> DiscoveryResult<T> {
-    fn new() -> Self {
-        Self {
-            devices: Vec::new(),
-            stats: DiscoveryStats::new(),
-        }
-    }
-
-    fn read_dir_failed(path: impl Into<PathBuf>, err: io::Error) -> Self {
-        let mut result = Self::new();
-        result.stats.record_read_dir_error(path, err);
-        result
-    }
-
-    fn issue(&self) -> Option<DiscoveryIssue> {
-        self.stats.issue(!self.devices.is_empty())
-    }
-
-    fn error_message(&self) -> Option<String> {
-        self.issue().map(|issue| issue.message())
-    }
-}
-
-#[derive(Debug, PartialEq, Eq)]
-enum DiscoveryIssue {
-    ReadDir {
-        path: PathBuf,
-        message: String,
-    },
-    PermissionDenied {
-        skipped: usize,
-    },
-    OpenFailed {
-        skipped: usize,
-        path: PathBuf,
-        message: String,
-    },
-    NoDevicesFound,
-}
-
-impl DiscoveryIssue {
-    fn message(&self) -> String {
-        match self {
-            DiscoveryIssue::ReadDir { path, message } => {
-                format!("unable to read {}: {}", path.display(), message)
-            }
-            DiscoveryIssue::PermissionDenied { skipped } => {
-                format!(
-                    "found {skipped} input device node(s), but none were readable; check permissions for /dev/input/event*"
-                )
-            }
-            DiscoveryIssue::OpenFailed {
-                skipped,
-                path,
-                message,
-            } => {
-                format!(
-                    "found {skipped} input device node(s), but none could be opened; first error: {}: {}",
-                    path.display(),
-                    message
-                )
-            }
-            DiscoveryIssue::NoDevicesFound => Error::NoDevicesFound.to_string(),
-        }
-    }
 }
 
 fn filtered_indexes_by_query<T, F>(
@@ -349,7 +65,7 @@ pub struct DeviceSelector {
 
 impl DeviceSelector {
     fn new(error_message: Option<String>) -> Self {
-        let discovery = Self::discover_devices();
+        let discovery = discover_devices(Self::open_device);
         let discovery_message = discovery.error_message();
         let devices = discovery.devices;
         let filtered_indexes = (0..devices.len()).collect();
@@ -363,60 +79,6 @@ impl DeviceSelector {
             error_message: error_message.or(discovery_message),
             mode: SelectorMode::Browsing,
         }
-    }
-
-    fn discover_devices() -> DiscoveryResult<DeviceInfo> {
-        let entries = match fs::read_dir(INPUT_DIR) {
-            Ok(entries) => entries,
-            Err(err) => return DiscoveryResult::read_dir_failed(INPUT_DIR, err),
-        };
-
-        let mut result = Self::discover_from_entries(
-            entries.map(|entry| entry.map(|entry| entry.path())),
-            Self::open_device,
-        );
-        result.devices.sort_unstable_by(|a, b| {
-            a.identifier
-                .to_lowercase()
-                .cmp(&b.identifier.to_lowercase())
-        });
-
-        result
-    }
-
-    fn discover_from_entries<T, I, F>(entries: I, mut open_device: F) -> DiscoveryResult<T>
-    where
-        I: IntoIterator<Item = io::Result<PathBuf>>,
-        F: FnMut(&Path) -> io::Result<T>,
-    {
-        let mut result = DiscoveryResult::new();
-
-        for entry in entries {
-            match entry {
-                Ok(path) => {
-                    if !Self::is_event_node(&path) {
-                        continue;
-                    }
-
-                    result.stats.event_nodes += 1;
-                    match open_device(&path) {
-                        Ok(device) => result.devices.push(device),
-                        Err(err) => result.stats.record_open_error(path, err),
-                    }
-                }
-                Err(err) => result.stats.record_read_dir_error(INPUT_DIR, err),
-            }
-        }
-
-        result
-    }
-
-    fn is_event_node(path: &Path) -> bool {
-        let Some(name) = path.file_name() else {
-            return false;
-        };
-
-        name.as_bytes().starts_with(INPUT_EVENT_PREFIX)
     }
 
     fn open_device(path: &Path) -> io::Result<DeviceInfo> {
@@ -438,7 +100,7 @@ impl DeviceSelector {
     }
 
     fn refresh_devices(&mut self) {
-        self.apply_discovery(Self::discover_devices());
+        self.apply_discovery(discover_devices(Self::open_device));
     }
 
     pub async fn run(
@@ -451,7 +113,7 @@ impl DeviceSelector {
         loop {
             terminal
                 .draw(|frame| {
-                    selector.render(frame.area(), frame.buffer_mut());
+                    render_selector(&mut selector, frame.area(), frame.buffer_mut());
                 })
                 .map_err(|err| Error::io(ErrorArea::Selector, "selector draw", err))?;
 
@@ -617,231 +279,13 @@ impl DeviceSelector {
             SelectorMode::Help => SelectorMode::Browsing,
         };
     }
-
-    fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        use Constraint::{Length, Min, Percentage};
-
-        let [_left_margin, content_area, _right_margin] = Layout::horizontal([
-            Percentage(LAYOUT_MARGIN_PCT),
-            Percentage(LAYOUT_CONTENT_WIDTH_PCT),
-            Percentage(LAYOUT_MARGIN_PCT),
-        ])
-        .areas(area);
-
-        // Keep existing top padding and search box, add a one-line footer below the list
-        let [_top_padding, search_area, list_area] = Layout::vertical([
-            Length(TOP_PADDING_HEIGHT),
-            Length(SEARCH_BOX_HEIGHT),
-            Min(MAIN_MIN_HEIGHT),
-        ])
-        .areas(content_area);
-
-        self.render_search_box(search_area, buf);
-        self.render_device_list(list_area, buf);
-        self.render_help_popup(area, buf);
-        self.render_error_popup(area, buf);
-    }
-
-    fn render_search_box(&self, area: Rect, buf: &mut Buffer) {
-        let search_text = format!(" {}_", self.search_query);
-        Paragraph::new(search_text)
-            .block(widgets::styled_titled_block(
-                " Search ",
-                Style::new().fg(tailwind::BLUE.c300),
-                Alignment::Center,
-            ))
-            .fg(TEXT_COLOR)
-            .render(area, buf);
-    }
-
-    fn render_device_list(&self, area: Rect, buf: &mut Buffer) {
-        let items = self.filtered_indexes.iter().map(|&device_index| {
-            let device = &self.devices[device_index];
-            ListItem::new(device.identifier.clone())
-        });
-
-        let list = List::new(items)
-            .block(widgets::styled_titled_block(
-                " Devices ",
-                Style::new().fg(tailwind::BLUE.c300),
-                Alignment::Center,
-            ))
-            .style(TEXT_COLOR)
-            .highlight_style(Style::default().bg(tailwind::GRAY.c600))
-            .highlight_symbol("> ");
-
-        let mut list_state = ListState::default();
-        list_state.select(if self.filtered_indexes.is_empty() {
-            None
-        } else {
-            Some(self.selected_filtered_index)
-        });
-
-        ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
-    }
-
-    fn render_error_popup(&self, area: Rect, buf: &mut Buffer) {
-        let Some(message) = &self.error_message else {
-            return;
-        };
-        let lines = [message.as_str()];
-        let popup = Popup::new(" Error ")
-            .min_size(POPUP_MIN_WIDTH, POPUP_MIN_HEIGHT)
-            .max_width(POPUP_MAX_WIDTH)
-            .text_style(Style::new().fg(tailwind::RED.c400).bold())
-            .border_style(Style::new().fg(tailwind::RED.c400).bold())
-            .text_alignment(Alignment::Center)
-            .title_alignment(Alignment::Center)
-            .wrap(Wrap { trim: true });
-        render_popup(area, buf, &popup, &lines);
-    }
-
-    fn render_help_popup(&self, area: Rect, buf: &mut Buffer) {
-        if self.mode != SelectorMode::Help {
-            return;
-        }
-        let popup = Popup::new(" Help ")
-            .min_size(HELP_POPUP_MIN_WIDTH, HELP_POPUP_MIN_HEIGHT)
-            .max_width(HELP_POPUP_MAX_WIDTH)
-            .text_style(Style::new().fg(TEXT_COLOR))
-            .border_style(Style::new().fg(tailwind::BLUE.c300).bold())
-            .text_alignment(Alignment::Left)
-            .title_alignment(Alignment::Center)
-            .wrap(Wrap { trim: false });
-        render_popup(area, buf, &popup, HELP_LINES);
-    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
     use fuzzy_matcher::skim::SkimMatcherV2;
 
-    use super::{
-        DeviceSelector, DiscoveryIssue, DiscoveryResult, SelectionAction, SelectorCommand,
-        SelectorMode, State, command_for, filtered_indexes_by_query,
-    };
-    use std::{
-        io,
-        path::{Path, PathBuf},
-    };
-
-    #[test]
-    fn discovery_issue_reports_no_devices_when_no_event_nodes_exist() {
-        let result: DiscoveryResult<()> = DiscoveryResult::new();
-
-        assert_eq!(result.issue(), Some(DiscoveryIssue::NoDevicesFound));
-    }
-
-    #[test]
-    fn discovery_issue_reports_permission_guidance_when_all_devices_are_skipped() {
-        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 2;
-        result.stats.record_open_error(
-            "/dev/input/event0",
-            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
-        );
-        result.stats.record_open_error(
-            "/dev/input/event1",
-            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
-        );
-
-        assert_eq!(
-            result.issue(),
-            Some(DiscoveryIssue::PermissionDenied { skipped: 2 })
-        );
-        assert_eq!(
-            result.error_message(),
-            Some(
-                "found 2 input device node(s), but none were readable; check permissions for /dev/input/event*"
-                    .to_string()
-            )
-        );
-    }
-
-    #[test]
-    fn discovery_issue_reports_open_failures_when_causes_are_mixed() {
-        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 2;
-        result.stats.record_open_error(
-            "/dev/input/event0",
-            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
-        );
-        result.stats.record_open_error(
-            "/dev/input/event1",
-            io::Error::new(io::ErrorKind::NotFound, "device disappeared"),
-        );
-
-        assert_eq!(
-            result.issue(),
-            Some(DiscoveryIssue::OpenFailed {
-                skipped: 2,
-                path: PathBuf::from("/dev/input/event1"),
-                message: "device disappeared".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn discovery_issue_prefers_open_failures_over_partial_read_dir_errors() {
-        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 1;
-        result.stats.record_read_dir_error(
-            "/dev/input",
-            io::Error::new(io::ErrorKind::Interrupted, "retry"),
-        );
-        result.stats.record_open_error(
-            "/dev/input/event0",
-            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
-        );
-
-        assert_eq!(
-            result.issue(),
-            Some(DiscoveryIssue::PermissionDenied { skipped: 1 })
-        );
-    }
-
-    #[test]
-    fn discovery_issue_reports_read_dir_failures() {
-        let result: DiscoveryResult<()> = DiscoveryResult::read_dir_failed(
-            "/dev/input",
-            io::Error::new(io::ErrorKind::PermissionDenied, "read denied"),
-        );
-
-        assert_eq!(
-            result.issue(),
-            Some(DiscoveryIssue::ReadDir {
-                path: PathBuf::from("/dev/input"),
-                message: "read denied".to_string(),
-            })
-        );
-    }
-
-    #[test]
-    fn discover_from_entries_counts_skips_and_filters_non_event_nodes() {
-        let entries = vec![
-            Ok(PathBuf::from("/dev/input/mice")),
-            Ok(PathBuf::from("/dev/input/event1")),
-            Err(io::Error::new(io::ErrorKind::Interrupted, "retry")),
-            Ok(PathBuf::from("/dev/input/event0")),
-        ];
-
-        let result = DeviceSelector::discover_from_entries(entries, |path: &Path| {
-            if path.ends_with("event1") {
-                return Err(io::Error::new(
-                    io::ErrorKind::PermissionDenied,
-                    "permission denied",
-                ));
-            }
-
-            Ok(path.display().to_string())
-        });
-
-        assert_eq!(result.stats.event_nodes, 2);
-        assert_eq!(result.stats.total_open_failures(), 1);
-        assert_eq!(result.stats.read_dir_failed, 1);
-        assert_eq!(result.devices, vec!["/dev/input/event0".to_string()]);
-    }
+    use super::{DeviceSelector, SelectionAction, SelectorMode, State, filtered_indexes_by_query};
 
     #[test]
     fn filtered_indexes_by_query_returns_all_items_for_empty_query() {
@@ -875,9 +319,9 @@ mod tests {
             mode: SelectorMode::Browsing,
         };
 
-        let discovery = DiscoveryResult::read_dir_failed(
+        let discovery = crate::device::selector::discovery::DiscoveryResult::read_dir_failed(
             "/dev/input",
-            io::Error::new(io::ErrorKind::PermissionDenied, "read denied"),
+            std::io::Error::new(std::io::ErrorKind::PermissionDenied, "read denied"),
         );
 
         selector.apply_discovery(discovery);
@@ -892,18 +336,6 @@ mod tests {
         assert_eq!(selector.search_query, "mouse");
     }
 
-    fn key(code: KeyCode) -> KeyEvent {
-        KeyEvent::new(code, KeyModifiers::NONE)
-    }
-
-    fn shifted_char(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
-    }
-
-    fn ctrl_char(c: char) -> KeyEvent {
-        KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
-    }
-
     fn selector_with(filtered_indexes: Vec<usize>, search_query: &str) -> DeviceSelector {
         DeviceSelector {
             devices: Vec::new(),
@@ -914,72 +346,6 @@ mod tests {
             error_message: None,
             mode: SelectorMode::Browsing,
         }
-    }
-
-    #[test]
-    fn command_for_ctrl_c_exits_from_any_mode() {
-        for mode in [SelectorMode::Browsing, SelectorMode::Help] {
-            assert_eq!(command_for(ctrl_char('c'), mode), SelectorCommand::Exit);
-        }
-    }
-
-    #[test]
-    fn command_for_escape_depends_on_mode() {
-        assert_eq!(
-            command_for(key(KeyCode::Esc), SelectorMode::Browsing),
-            SelectorCommand::Back
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Esc), SelectorMode::Help),
-            SelectorCommand::ToggleHelp
-        );
-    }
-
-    #[test]
-    fn command_for_maps_navigation_keys_to_explicit_variants() {
-        assert_eq!(
-            command_for(key(KeyCode::Up), SelectorMode::Browsing),
-            SelectorCommand::MoveUp
-        );
-        assert_eq!(
-            command_for(ctrl_char('p'), SelectorMode::Browsing),
-            SelectorCommand::MoveUp
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Down), SelectorMode::Browsing),
-            SelectorCommand::MoveDown
-        );
-        assert_eq!(
-            command_for(ctrl_char('n'), SelectorMode::Browsing),
-            SelectorCommand::MoveDown
-        );
-        assert_eq!(
-            command_for(key(KeyCode::PageUp), SelectorMode::Browsing),
-            SelectorCommand::PageUp
-        );
-        assert_eq!(
-            command_for(key(KeyCode::PageDown), SelectorMode::Browsing),
-            SelectorCommand::PageDown
-        );
-    }
-
-    #[test]
-    fn command_for_only_adds_plain_and_shifted_characters() {
-        assert_eq!(
-            command_for(key(KeyCode::Char('a')), SelectorMode::Browsing),
-            SelectorCommand::AddChar('a')
-        );
-        assert_eq!(
-            command_for(shifted_char('A'), SelectorMode::Browsing),
-            SelectorCommand::AddChar('A')
-        );
-        assert_eq!(
-            command_for(
-                KeyEvent::new(KeyCode::Char('a'), KeyModifiers::ALT),
-                SelectorMode::Browsing
-            ),
-            SelectorCommand::None
-        );
     }
 
     #[test]

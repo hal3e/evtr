@@ -1,7 +1,7 @@
 // Theme items are consolidated in theme.rs; re-exported for convenience
 pub use crate::device::monitor::theme::{
-    COLOR_BUTTON_PRESSED, COLOR_TOUCH_INACTIVE, COLOR_TOUCH_POINT, style_box_focused,
-    style_box_unfocused, style_gauge, style_header, style_label,
+    COLOR_BUTTON_PRESSED, COLOR_TOUCH_INACTIVE, COLOR_TOUCH_POINT, style_gauge, style_header,
+    style_label,
 };
 
 pub const BUTTONS_PER_ROW: usize = 3;

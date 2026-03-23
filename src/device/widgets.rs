@@ -5,6 +5,8 @@ use ratatui::{
     widgets::{Block, Borders, Widget},
 };
 
+use super::theme;
+
 pub(crate) fn styled_titled_block<'a>(
     title: &'a str,
     style: Style,
@@ -29,6 +31,10 @@ pub(crate) fn bordered_titled_block<'a>(
         .border_style(border_style)
 }
 
+pub(crate) fn accent_titled_block<'a>(title: &'a str) -> Block<'a> {
+    styled_titled_block(title, theme::style_panel_focused(), Alignment::Center)
+}
+
 pub(crate) fn render_bordered_titled_box(
     area: Rect,
     title: &str,
@@ -44,6 +50,25 @@ pub(crate) fn render_bordered_titled_box(
     let inner = bordered_box_inner(area);
     block.render(area, buf);
     inner
+}
+
+pub(crate) fn render_panel_box(area: Rect, title: &str, focused: bool, buf: &mut Buffer) -> Rect {
+    let style = if focused {
+        theme::style_panel_focused()
+    } else {
+        theme::style_panel_unfocused()
+    };
+    render_bordered_titled_box(area, title, style, Alignment::Left, buf)
+}
+
+pub(crate) fn render_unfocused_panel_box(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
+    render_bordered_titled_box(
+        area,
+        title,
+        theme::style_panel_unfocused(),
+        Alignment::Left,
+        buf,
+    )
 }
 
 pub(crate) fn bordered_box_inner(area: Rect) -> Rect {
