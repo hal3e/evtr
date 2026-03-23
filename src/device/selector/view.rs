@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
-use super::{DeviceSelector, commands::SelectorMode};
+use super::{commands::SelectorMode, state::SelectorState};
 use crate::device::{
     popup::{error_popup, help_popup, render_popup},
     theme, widgets,
@@ -31,7 +31,7 @@ const HELP_LINES: &[&str] = &[
     "Help: ? (press ? or Esc to close)",
 ];
 
-pub(crate) fn render_selector(selector: &mut DeviceSelector, area: Rect, buf: &mut Buffer) {
+pub(crate) fn render_selector(state: &SelectorState, area: Rect, buf: &mut Buffer) {
     use Constraint::{Length, Min, Percentage};
 
     let [_left_margin, content_area, _right_margin] = Layout::horizontal([
@@ -48,23 +48,23 @@ pub(crate) fn render_selector(selector: &mut DeviceSelector, area: Rect, buf: &m
     ])
     .areas(content_area);
 
-    render_search_box(selector, search_area, buf);
-    render_device_list(selector, list_area, buf);
-    render_help_popup(selector, area, buf);
-    render_error_popup(selector, area, buf);
+    render_search_box(state, search_area, buf);
+    render_device_list(state, list_area, buf);
+    render_help_popup(state, area, buf);
+    render_error_popup(state, area, buf);
 }
 
-fn render_search_box(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
-    let search_text = format!(" {}_", selector.search_query);
+fn render_search_box(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+    let search_text = format!(" {}_", state.search_query());
     Paragraph::new(search_text)
         .block(widgets::accent_titled_block(" Search "))
         .style(theme::style_text())
         .render(area, buf);
 }
 
-fn render_device_list(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
-    if selector.filtered_indexes.is_empty() {
-        Paragraph::new(empty_state_message(&selector.search_query))
+fn render_device_list(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+    if state.filtered_indexes().is_empty() {
+        Paragraph::new(empty_state_message(state.search_query()))
             .block(widgets::accent_titled_block(" Devices "))
             .style(theme::style_text())
             .alignment(ratatui::layout::Alignment::Center)
@@ -73,9 +73,10 @@ fn render_device_list(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
         return;
     }
 
-    let items = selector.filtered_indexes.iter().map(|&device_index| {
-        let device = &selector.devices[device_index];
-        ListItem::new(device.identifier.clone())
+    let items = state.filtered_indexes().iter().filter_map(|&device_index| {
+        state
+            .device_identifier(device_index)
+            .map(|identifier| ListItem::new(identifier.to_string()))
     });
 
     let list = List::new(items)
@@ -85,13 +86,13 @@ fn render_device_list(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
-    list_state.select(Some(selector.selected_filtered_index));
+    list_state.select(Some(state.selected_filtered_index()));
 
     ratatui::widgets::StatefulWidget::render(list, area, buf, &mut list_state);
 }
 
-fn render_error_popup(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
-    let Some(message) = selector.error_message.as_deref() else {
+fn render_error_popup(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+    let Some(message) = state.error_message() else {
         return;
     };
     let lines = [message];
@@ -104,8 +105,8 @@ fn render_error_popup(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
     render_popup(area, buf, &popup, &lines);
 }
 
-fn render_help_popup(selector: &DeviceSelector, area: Rect, buf: &mut Buffer) {
-    if selector.mode != SelectorMode::Help {
+fn render_help_popup(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+    if state.mode() != SelectorMode::Help {
         return;
     }
 

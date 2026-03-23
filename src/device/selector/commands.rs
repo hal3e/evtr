@@ -1,12 +1,20 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{DeviceSelector, PAGE_SCROLL_SIZE};
-use crate::device::State;
+use super::{
+    PAGE_SCROLL_SIZE,
+    state::{BackAction, SelectionAction, SelectorState},
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SelectorMode {
     Browsing,
     Help,
+}
+
+impl SelectorMode {
+    pub(crate) fn is_browsing(self) -> bool {
+        matches!(self, Self::Browsing)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,9 +37,10 @@ pub(crate) enum SelectorCommand {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectionAction {
-    Refresh,
-    Open(usize),
+pub(crate) enum SelectorEffect {
+    Exit,
+    RefreshDevices,
+    OpenSelection,
 }
 
 pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
@@ -80,56 +89,63 @@ pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand 
 }
 
 pub(crate) fn apply_command(
-    selector: &mut DeviceSelector,
+    state: &mut SelectorState,
     command: SelectorCommand,
-) -> Option<State> {
+) -> Option<SelectorEffect> {
     match command {
-        SelectorCommand::Exit => Some(State::Exit),
-        SelectorCommand::Back => selector.back(),
+        SelectorCommand::Exit => Some(SelectorEffect::Exit),
+        SelectorCommand::Back => match state.back_action() {
+            BackAction::Exit => Some(SelectorEffect::Exit),
+            BackAction::ClearSearch => {
+                state.clear_search();
+                None
+            }
+        },
         SelectorCommand::ToggleHelp => {
-            selector.toggle_help();
+            state.toggle_help();
             None
         }
-        SelectorCommand::Refresh => {
-            selector.refresh_devices();
-            None
-        }
-        SelectorCommand::Select => selector.select_or_refresh(),
+        SelectorCommand::Refresh => Some(SelectorEffect::RefreshDevices),
+        SelectorCommand::Select => match state.selection_action() {
+            Some(SelectionAction::Refresh) => Some(SelectorEffect::RefreshDevices),
+            Some(SelectionAction::OpenSelected) => Some(SelectorEffect::OpenSelection),
+            None => None,
+        },
         SelectorCommand::ClearSearch => {
-            selector.clear_search();
+            state.clear_search();
             None
         }
         SelectorCommand::DeleteChar => {
-            selector.remove_char();
+            state.remove_char();
             None
         }
         SelectorCommand::AddChar(c) => {
-            selector.add_char(c);
+            state.add_char(c);
             None
         }
         SelectorCommand::MoveUp => {
-            selector.move_selection_by(-1);
+            state.move_selection_by(-1);
             None
         }
         SelectorCommand::MoveDown => {
-            selector.move_selection_by(1);
+            state.move_selection_by(1);
             None
         }
         SelectorCommand::PageUp => {
-            selector.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
+            state.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
             None
         }
         SelectorCommand::PageDown => {
-            selector.move_selection_by(PAGE_SCROLL_SIZE as i32);
+            state.move_selection_by(PAGE_SCROLL_SIZE as i32);
             None
         }
         SelectorCommand::Home => {
-            selector.select_index(0);
+            state.select_index(0);
             None
         }
         SelectorCommand::End => {
-            if let Some(last_index) = selector.filtered_indexes.len().checked_sub(1) {
-                selector.select_index(last_index);
+            if let Some(last_index) = state.filtered_indexes().len().checked_sub(1) {
+                state.select_index(last_index);
             }
             None
         }
