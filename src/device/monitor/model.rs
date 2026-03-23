@@ -1,151 +1,20 @@
-use std::{collections::HashMap, io};
+mod bootstrap;
+mod types;
 
-use evdev::{
-    AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, RelativeAxisCode,
-};
+use std::collections::HashMap;
 
-use crate::device::monitor::{ComponentBootstrap, config, math};
+use evdev::{AbsoluteAxisCode, Device, InputEvent};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) enum InputTypeId {
-    Abs,
-    Rel,
-    Key,
-}
+use crate::device::monitor::ComponentBootstrap;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
-pub(crate) struct InputId {
-    pub(crate) kind: InputTypeId,
-    pub(crate) code: u16,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum AxisOrigin {
-    Kernel,
-    Fallback,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AbsoluteState {
-    pub(crate) origin: AxisOrigin,
-    pub(crate) min: i32,
-    pub(crate) max: i32,
-    pub(crate) value: i32,
-}
-
-impl AbsoluteState {
-    pub(crate) fn kernel(min: i32, max: i32, value: i32) -> Self {
-        Self {
-            origin: AxisOrigin::Kernel,
-            min,
-            max,
-            value,
-        }
-    }
-
-    pub(crate) fn fallback(min: i32, max: i32, value: i32) -> Self {
-        Self {
-            origin: AxisOrigin::Fallback,
-            min,
-            max,
-            value,
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum InputKind {
-    Absolute(AbsoluteState),
-    Relative(i32),
-    Button(bool),
-}
-
-impl InputKind {
-    pub(crate) fn normalized(&self) -> f64 {
-        match *self {
-            Self::Absolute(state) => math::normalize_range(state.value, state.min, state.max),
-            Self::Relative(value) => math::normalize_wrapped(value, config::RELATIVE_DISPLAY_RANGE),
-            Self::Button(pressed) => (pressed as u8) as f64,
-        }
-    }
-
-    pub(crate) fn display_label(&self) -> String {
-        match self {
-            Self::Absolute(state) => state.value.to_string(),
-            Self::Relative(value) => {
-                math::wrapped_value(*value, config::RELATIVE_DISPLAY_RANGE).to_string()
-            }
-            Self::Button(pressed) => button_label(*pressed).to_string(),
-        }
-    }
-
-    pub(crate) fn update(&mut self, event: &InputEvent) {
-        let value = event.value();
-        match (self, event.event_type()) {
-            (Self::Absolute(state), EventType::ABSOLUTE) => state.value = value,
-            (Self::Relative(v), EventType::RELATIVE) => {
-                *v = v.saturating_add(value);
-            }
-            (Self::Button(pressed), EventType::KEY) => *pressed = value != 0,
-            _ => {}
-        }
-    }
-}
-
-fn button_label(pressed: bool) -> &'static str {
-    if pressed { "ON" } else { "OFF" }
-}
-
-#[derive(Debug, Clone)]
-pub(crate) struct DeviceInput {
-    pub(crate) name: String,
-    pub(crate) input_type: InputKind,
-}
-
-impl DeviceInput {
-    fn absolute(name: String, state: AbsoluteState) -> Self {
-        Self {
-            name,
-            input_type: InputKind::Absolute(state),
-        }
-    }
-
-    fn relative(name: String) -> Self {
-        Self {
-            name,
-            input_type: InputKind::Relative(0),
-        }
-    }
-
-    fn button(name: String, pressed: bool) -> Self {
-        Self {
-            name,
-            input_type: InputKind::Button(pressed),
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) struct AbsoluteAxis {
-    pub(crate) min: i32,
-    pub(crate) max: i32,
-    pub(crate) value: i32,
-}
-
-pub(crate) type InputSlice<'a> = &'a [DeviceInput];
+use self::bootstrap::collect_device_inputs;
+pub(crate) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
 
 pub(crate) struct InputCollection {
     absolute: Vec<DeviceInput>,
     relative: Vec<DeviceInput>,
     buttons: Vec<DeviceInput>,
     by_event: HashMap<InputId, InputLocation>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-struct AxisSnapshot {
-    min: i32,
-    max: i32,
-    value: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -157,78 +26,11 @@ enum InputLocation {
 
 impl InputCollection {
     pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
-        let mut absolute = Vec::new();
-        let mut relative = Vec::new();
-        let mut buttons = Vec::new();
-        let mut startup_warnings = Vec::new();
-
-        let abs_state = load_startup_state(
-            device.supported_absolute_axes().is_some(),
-            &mut startup_warnings,
-            || device.get_abs_state(),
-            |err| {
-                format!(
-                    "unable to load absolute axis state; using fallback defaults until events arrive: {err}"
-                )
-            },
-        );
-
-        let key_state = load_startup_state(
-            device.supported_keys().is_some(),
-            &mut startup_warnings,
-            || device.get_key_state(),
-            |err| {
-                format!(
-                    "unable to load key/button state; buttons start released until events arrive: {err}"
-                )
-            },
-        );
-
-        if let Some(axes) = device.supported_absolute_axes() {
-            for axis in axes.iter() {
-                let code = axis.0;
-                absolute.push((
-                    code,
-                    DeviceInput::absolute(
-                        absolute_name(code),
-                        absolute_state_from_snapshot(abs_state.as_ref().and_then(|state| {
-                            state.get(code as usize).map(|info| AxisSnapshot {
-                                min: info.minimum,
-                                max: info.maximum,
-                                value: info.value,
-                            })
-                        })),
-                    ),
-                ));
-            }
-        }
-
-        if let Some(axes) = device.supported_relative_axes() {
-            for axis in axes.iter() {
-                let code = axis.0;
-                relative.push((code, DeviceInput::relative(relative_name(code))));
-            }
-        }
-
-        if let Some(keys) = device.supported_keys() {
-            for key in keys.iter() {
-                if is_touch_contact_button(key) {
-                    continue;
-                }
-                let code = key.0;
-                buttons.push((
-                    code,
-                    DeviceInput::button(
-                        button_name(key),
-                        is_key_pressed(key, key_state.as_deref()),
-                    ),
-                ));
-            }
-        }
+        let entries = collect_device_inputs(device);
 
         ComponentBootstrap {
-            value: Self::from_entries(absolute, relative, buttons),
-            startup_warnings,
+            value: Self::from_entries(entries.absolute, entries.relative, entries.buttons),
+            startup_warnings: entries.startup_warnings,
         }
     }
 
@@ -243,8 +45,8 @@ impl InputCollection {
 
     pub(crate) fn reset_relative_axes(&mut self) {
         for input in &mut self.relative {
-            if let InputKind::Relative(v) = &mut input.input_type {
-                *v = 0;
+            if let InputKind::Relative(value) = &mut input.input_type {
+                *value = 0;
             }
         }
     }
@@ -346,191 +148,14 @@ impl InputCollection {
     }
 }
 
-impl InputId {
-    pub(crate) fn new(kind: InputTypeId, code: u16) -> Self {
-        Self { kind, code }
-    }
-
-    pub(crate) fn absolute(code: u16) -> Self {
-        Self::new(InputTypeId::Abs, code)
-    }
-
-    pub(crate) fn relative(code: u16) -> Self {
-        Self::new(InputTypeId::Rel, code)
-    }
-
-    pub(crate) fn key(code: u16) -> Self {
-        Self::new(InputTypeId::Key, code)
-    }
-
-    pub(crate) fn from_event(event: &InputEvent) -> Option<Self> {
-        let kind = match event.event_type() {
-            EventType::ABSOLUTE => InputTypeId::Abs,
-            EventType::RELATIVE => InputTypeId::Rel,
-            EventType::KEY => InputTypeId::Key,
-            _ => return None,
-        };
-
-        Some(Self::new(kind, event.code()))
-    }
-}
-
-fn absolute_state_from_snapshot(snapshot: Option<AxisSnapshot>) -> AbsoluteState {
-    if let Some(snapshot) = snapshot {
-        AbsoluteState::kernel(snapshot.min, snapshot.max, snapshot.value)
-    } else {
-        AbsoluteState::fallback(
-            config::DEFAULT_AXIS_RANGE.0,
-            config::DEFAULT_AXIS_RANGE.1,
-            0,
-        )
-    }
-}
-
-fn load_startup_state<T>(
-    supported: bool,
-    startup_warnings: &mut Vec<String>,
-    load: impl FnOnce() -> io::Result<T>,
-    warning: impl FnOnce(&io::Error) -> String,
-) -> Option<T> {
-    if !supported {
-        return None;
-    }
-
-    match load() {
-        Ok(state) => Some(state),
-        Err(err) => {
-            startup_warnings.push(warning(&err));
-            None
-        }
-    }
-}
-
-fn absolute_name(code: u16) -> String {
-    format!("{:?}", AbsoluteAxisCode(code)).to_lowercase()
-}
-
-fn relative_name(code: u16) -> String {
-    format!("{:?}", RelativeAxisCode(code)).to_lowercase()
-}
-
-fn button_name(code: KeyCode) -> String {
-    strip_btn_prefix(&format!("{code:?}").to_lowercase())
-}
-
-fn is_key_pressed(code: KeyCode, key_state: Option<&AttributeSetRef<KeyCode>>) -> bool {
-    key_state.is_some_and(|state| state.contains(code))
-}
-
-fn is_touch_contact_button(code: KeyCode) -> bool {
-    matches!(
-        code,
-        KeyCode::BTN_TOUCH
-            | KeyCode::BTN_TOOL_FINGER
-            | KeyCode::BTN_TOOL_DOUBLETAP
-            | KeyCode::BTN_TOOL_TRIPLETAP
-            | KeyCode::BTN_TOOL_QUADTAP
-            | KeyCode::BTN_TOOL_QUINTTAP
-    )
-}
-
-fn strip_btn_prefix(name: &str) -> String {
-    if let Some(rest) = name.strip_prefix("btn_") {
-        rest.to_string()
-    } else {
-        name.to_string()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use std::collections::HashMap;
 
-    use evdev::{AttributeSet, EventType, InputEvent, KeyCode};
+    use evdev::{EventType, InputEvent};
 
-    use super::{
-        AbsoluteState, AxisOrigin, AxisSnapshot, DeviceInput, InputCollection, InputId, InputKind,
-        InputLocation, InputTypeId, absolute_state_from_snapshot, is_key_pressed,
-        is_touch_contact_button,
-    };
-    use crate::device::monitor::config;
-
-    #[test]
-    fn absolute_state_from_snapshot_uses_kernel_values() {
-        assert_eq!(
-            absolute_state_from_snapshot(Some(AxisSnapshot {
-                min: -10,
-                max: 20,
-                value: 7,
-            })),
-            AbsoluteState::kernel(-10, 20, 7)
-        );
-    }
-
-    #[test]
-    fn absolute_state_from_snapshot_uses_explicit_fallback_defaults() {
-        assert_eq!(
-            absolute_state_from_snapshot(None),
-            AbsoluteState::fallback(
-                config::DEFAULT_AXIS_RANGE.0,
-                config::DEFAULT_AXIS_RANGE.1,
-                0
-            )
-        );
-    }
-
-    #[test]
-    fn absolute_state_preserves_origin() {
-        assert_eq!(AbsoluteState::kernel(-1, 1, 0).origin, AxisOrigin::Kernel);
-        assert_eq!(
-            AbsoluteState::fallback(-1, 1, 0).origin,
-            AxisOrigin::Fallback
-        );
-    }
-
-    #[test]
-    fn is_key_pressed_reads_initial_button_state() {
-        let mut keys = AttributeSet::new();
-        keys.insert(KeyCode::BTN_SOUTH);
-
-        assert!(is_key_pressed(KeyCode::BTN_SOUTH, Some(&keys)));
-        assert!(!is_key_pressed(KeyCode::BTN_EAST, Some(&keys)));
-        assert!(!is_key_pressed(KeyCode::BTN_SOUTH, None));
-    }
-
-    #[test]
-    fn is_touch_contact_button_filters_touch_contact_keys() {
-        assert!(is_touch_contact_button(KeyCode::BTN_TOUCH));
-        assert!(is_touch_contact_button(KeyCode::BTN_TOOL_FINGER));
-        assert!(is_touch_contact_button(KeyCode::BTN_TOOL_DOUBLETAP));
-        assert!(!is_touch_contact_button(KeyCode::BTN_LEFT));
-        assert!(!is_touch_contact_button(KeyCode::BTN_SOUTH));
-    }
-
-    #[test]
-    fn input_id_helpers_use_named_fields() {
-        assert_eq!(
-            InputId::absolute(1),
-            InputId {
-                kind: InputTypeId::Abs,
-                code: 1,
-            }
-        );
-        assert_eq!(
-            InputId::relative(2),
-            InputId {
-                kind: InputTypeId::Rel,
-                code: 2,
-            }
-        );
-        assert_eq!(
-            InputId::key(3),
-            InputId {
-                kind: InputTypeId::Key,
-                code: 3,
-            }
-        );
-    }
+    use super::{DeviceInput, InputCollection, InputId, InputKind, InputLocation};
+    use crate::device::monitor::model::types::AbsoluteState;
 
     fn absolute_input(name: &str, value: i32) -> DeviceInput {
         DeviceInput {
