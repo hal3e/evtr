@@ -121,6 +121,102 @@ pub(crate) struct RenderPlan {
     pub(crate) hat_state: Option<HatState>,
 }
 
+struct WidgetState {
+    joystick: JoystickState,
+    hat_state: Option<HatState>,
+    joystick_count: usize,
+    axes_available: bool,
+    touch_enabled: bool,
+    buttons_available: bool,
+}
+
+impl WidgetState {
+    fn from_inputs(
+        state: &MonitorState,
+        counts: Counts,
+        inputs: &InputCollection,
+        touch: &TouchState,
+    ) -> Self {
+        let joystick = if touch.is_touch_device() {
+            JoystickState::default()
+        } else {
+            JoystickState::from_axes(
+                inputs.absolute_axis_pair(AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y),
+                inputs.absolute_axis_pair(AbsoluteAxisCode::ABS_RX, AbsoluteAxisCode::ABS_RY),
+            )
+        };
+        let hat_state = if touch.is_touch_device() {
+            None
+        } else {
+            inputs
+                .absolute_axis_pair(AbsoluteAxisCode::ABS_HAT0X, AbsoluteAxisCode::ABS_HAT0Y)
+                .map(|(x, y)| HatState::from_axes(x, y, state.joystick_invert_y()))
+        };
+
+        Self {
+            joystick_count: joystick.count(),
+            joystick,
+            hat_state,
+            axes_available: counts.total_axes() > 0,
+            touch_enabled: touch.enabled(),
+            buttons_available: counts.btn > 0,
+        }
+    }
+
+    fn joystick_present(&self) -> bool {
+        self.joystick_count > 0
+    }
+
+    fn hat_present(&self) -> bool {
+        self.hat_state.is_some()
+    }
+
+    fn main_min_width(&self) -> u16 {
+        let mut width = config::MAIN_COLUMN_MIN_WIDTH;
+        if self.axes_available {
+            width = width.max(config::AXIS_MIN_WIDTH);
+        }
+        if self.touch_enabled {
+            width = width.max(config::TOUCHPAD_MIN_WIDTH);
+        }
+        if self.joystick_present() {
+            width = width.max(config::JOYSTICK_MIN_SIZE);
+        }
+        if self.hat_present() {
+            width = width.max(config::HAT_MIN_SIZE);
+        }
+        width
+    }
+}
+
+struct AreaPlan {
+    focus: Focus,
+    boxes: PlannedBoxes,
+    areas: PlannedAreas,
+}
+
+struct VisibleCapacities {
+    abs: usize,
+    rel: usize,
+    button_rows: usize,
+}
+
+impl VisibleCapacities {
+    fn from_areas(counts: Counts, areas: &PlannedAreas) -> Self {
+        Self {
+            abs: areas
+                .abs
+                .map(|area| AxisRenderer::capacity_for(area, counts.abs))
+                .unwrap_or(0),
+            rel: areas
+                .rel
+                .map(|area| AxisRenderer::capacity_for(area, counts.rel))
+                .unwrap_or(0),
+            button_rows: areas.buttons.map(button_rows_capacity).unwrap_or(0),
+        }
+    }
+}
+
 impl RenderPlan {
     pub(crate) fn focusable(&self) -> bool {
         self.boxes.axes.is_some() && self.boxes.buttons.is_some()
@@ -141,62 +237,67 @@ pub(crate) fn build_render_plan(
     let counts = state.counts();
     let [_, content] = main_layout(area);
     let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
-    let buttons_available = counts.btn > 0;
-    let joystick = if touch.is_touch_device() {
-        JoystickState::default()
-    } else {
-        JoystickState::from_axes(
-            inputs.absolute_axis_pair(AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y),
-            inputs.absolute_axis_pair(AbsoluteAxisCode::ABS_RX, AbsoluteAxisCode::ABS_RY),
-        )
-    };
-    let hat_state = if touch.is_touch_device() {
-        None
-    } else {
-        inputs
-            .absolute_axis_pair(AbsoluteAxisCode::ABS_HAT0X, AbsoluteAxisCode::ABS_HAT0Y)
-            .map(|(x, y)| HatState::from_axes(x, y, state.joystick_invert_y()))
-    };
-    let joystick_count = joystick.count();
-    let joystick_present = joystick_count > 0;
-    let hat_present = hat_state.is_some();
+    let widget_state = WidgetState::from_inputs(state, counts, inputs, touch);
+    let area_plan = plan_areas(
+        content,
+        counts,
+        min_button_gap,
+        state.focus(),
+        &widget_state,
+    );
+    let capacities = VisibleCapacities::from_areas(counts, &area_plan.areas);
 
-    let axes_available = counts.total_axes() > 0;
-    let touch_enabled = touch.enabled();
+    let abs_visible = capacities.abs > 0;
+    let rel_visible = capacities.rel > 0;
+    let buttons_visible = capacities.button_rows > 0;
 
-    let mut main_min_width = config::MAIN_COLUMN_MIN_WIDTH;
-    if axes_available {
-        main_min_width = main_min_width.max(config::AXIS_MIN_WIDTH);
-    }
-    if touch_enabled {
-        main_min_width = main_min_width.max(config::TOUCHPAD_MIN_WIDTH);
-    }
-    if joystick_present {
-        main_min_width = main_min_width.max(config::JOYSTICK_MIN_SIZE);
-    }
-    if hat_present {
-        main_min_width = main_min_width.max(config::HAT_MIN_SIZE);
-    }
+    let effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
+    let scroll_bounds = ScrollBounds::from_capacities(
+        effective_counts,
+        capacities.abs,
+        capacities.rel,
+        capacities.button_rows,
+    );
+    let scroll = clamp_scroll_state(state, &scroll_bounds, &capacities);
 
+    RenderPlan {
+        focus: area_plan.focus,
+        scroll,
+        effective_counts,
+        scroll_bounds,
+        boxes: area_plan.boxes,
+        areas: area_plan.areas,
+        joystick: widget_state.joystick,
+        hat_state: widget_state.hat_state,
+    }
+}
+
+fn plan_areas(
+    content: Rect,
+    counts: Counts,
+    min_button_gap: u16,
+    current_focus: Focus,
+    widget_state: &WidgetState,
+) -> AreaPlan {
     let (main_area, buttons_column) = split_buttons_column(
         content,
-        buttons_available,
-        main_min_width,
+        widget_state.buttons_available,
+        widget_state.main_min_width(),
         config::BUTTONS_COLUMN_MIN_WIDTH,
         min_button_gap,
     );
 
-    let axes_present = axes_available && main_area.width >= config::AXIS_MIN_WIDTH;
-    let touch_present = touch_enabled && main_area.width >= config::TOUCHPAD_MIN_WIDTH;
+    let axes_present = widget_state.axes_available && main_area.width >= config::AXIS_MIN_WIDTH;
+    let touch_present = widget_state.touch_enabled && main_area.width >= config::TOUCHPAD_MIN_WIDTH;
     let button_width = main_area.width / config::BUTTONS_PER_ROW as u16;
-    let buttons_present = buttons_available && button_width > min_button_gap;
+    let buttons_present = widget_state.buttons_available && button_width > min_button_gap;
 
     let (layout, buttons_box) = if let Some(buttons_area) = buttons_column {
         let layout = box_layout(
             main_area,
-            joystick_present,
-            joystick_count,
-            hat_present,
+            widget_state.joystick_present(),
+            widget_state.joystick_count,
+            widget_state.hat_present(),
             touch_present,
             axes_present,
             false,
@@ -205,9 +306,9 @@ pub(crate) fn build_render_plan(
     } else {
         let layout = box_layout(
             main_area,
-            joystick_present,
-            joystick_count,
-            hat_present,
+            widget_state.joystick_present(),
+            widget_state.joystick_count,
+            widget_state.hat_present(),
             touch_present,
             axes_present,
             buttons_present,
@@ -215,49 +316,48 @@ pub(crate) fn build_render_plan(
         let buttons_box = layout.buttons_box;
         (layout, buttons_box)
     };
-    let joystick_box = layout.joystick_box;
-    let hat_box = layout.hat_box;
-    let axes_box = layout.axes_box;
-    let touch_box = layout.touch_box;
-    let focus = synced_focus(state.focus(), axes_box.is_some(), buttons_box.is_some());
-    let axes_inner = axes_box.map(widgets::bordered_box_inner);
-    let joystick_area = joystick_box.map(widgets::bordered_box_inner);
-    let hat_area = hat_box.map(widgets::bordered_box_inner);
-    let buttons_area = buttons_box.map(widgets::bordered_box_inner);
-    let touch_area = touch_box.map(widgets::bordered_box_inner);
+
+    let boxes = PlannedBoxes {
+        joystick: layout.joystick_box,
+        hat: layout.hat_box,
+        axes: layout.axes_box,
+        touch: layout.touch_box,
+        buttons: buttons_box,
+    };
+    let axes_inner = boxes.axes.map(widgets::bordered_box_inner);
     let axes_sections = axes_inner.map(|inner| axes_layout(inner, counts.abs, counts.rel));
     let (abs_area, rel_area) = if let Some(sections) = axes_sections {
         (sections.abs_area, sections.rel_area)
     } else {
         (None, None)
     };
+    let areas = PlannedAreas {
+        joystick: boxes.joystick.map(widgets::bordered_box_inner),
+        hat: boxes.hat.map(widgets::bordered_box_inner),
+        abs: abs_area,
+        rel: rel_area,
+        touch: boxes.touch.map(widgets::bordered_box_inner),
+        buttons: boxes.buttons.map(widgets::bordered_box_inner),
+    };
 
-    let abs_visible_capacity = abs_area
-        .map(|a| AxisRenderer::capacity_for(a, counts.abs))
-        .unwrap_or(0);
-    let rel_visible_capacity = rel_area
-        .map(|a| AxisRenderer::capacity_for(a, counts.rel))
-        .unwrap_or(0);
+    AreaPlan {
+        focus: synced_focus(current_focus, boxes.axes.is_some(), boxes.buttons.is_some()),
+        boxes,
+        areas,
+    }
+}
 
-    let abs_visible = abs_visible_capacity > 0;
-    let rel_visible = rel_visible_capacity > 0;
-
-    let button_rows_capacity = buttons_area.map(button_rows_capacity).unwrap_or(0);
-    let buttons_visible = button_rows_capacity > 0;
-
-    let effective_counts = counts.filtered(abs_visible, rel_visible, buttons_visible);
-    let scroll_bounds = ScrollBounds::from_capacities(
-        effective_counts,
-        abs_visible_capacity,
-        rel_visible_capacity,
-        button_rows_capacity,
-    );
-    let axis_scroll = if abs_visible_capacity + rel_visible_capacity == 0 {
+fn clamp_scroll_state(
+    state: &MonitorState,
+    scroll_bounds: &ScrollBounds,
+    capacities: &VisibleCapacities,
+) -> ScrollState {
+    let axis = if capacities.abs + capacities.rel == 0 {
         0
     } else {
         state.axis_scroll().min(scroll_bounds.axes_max)
     };
-    let button_row_scroll = if button_rows_capacity == 0 {
+    let button_row = if capacities.button_rows == 0 {
         0
     } else {
         state
@@ -265,32 +365,7 @@ pub(crate) fn build_render_plan(
             .min(scroll_bounds.button_row_max_start)
     };
 
-    RenderPlan {
-        focus,
-        scroll: ScrollState {
-            axis: axis_scroll,
-            button_row: button_row_scroll,
-        },
-        effective_counts,
-        scroll_bounds,
-        boxes: PlannedBoxes {
-            joystick: joystick_box,
-            hat: hat_box,
-            axes: axes_box,
-            touch: touch_box,
-            buttons: buttons_box,
-        },
-        areas: PlannedAreas {
-            joystick: joystick_area,
-            hat: hat_area,
-            abs: abs_area,
-            rel: rel_area,
-            touch: touch_area,
-            buttons: buttons_area,
-        },
-        joystick,
-        hat_state,
-    }
+    ScrollState { axis, button_row }
 }
 
 pub(crate) fn axis_offsets_for(
