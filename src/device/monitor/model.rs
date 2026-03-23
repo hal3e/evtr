@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, io};
 
 use evdev::{
     AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, RelativeAxisCode,
@@ -102,6 +102,29 @@ pub(crate) struct DeviceInput {
     pub(crate) input_type: InputKind,
 }
 
+impl DeviceInput {
+    fn absolute(name: String, state: AbsoluteState) -> Self {
+        Self {
+            name,
+            input_type: InputKind::Absolute(state),
+        }
+    }
+
+    fn relative(name: String) -> Self {
+        Self {
+            name,
+            input_type: InputKind::Relative(0),
+        }
+    }
+
+    fn button(name: String, pressed: bool) -> Self {
+        Self {
+            name,
+            input_type: InputKind::Button(pressed),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) struct AbsoluteAxis {
     pub(crate) min: i32,
@@ -139,71 +162,54 @@ impl InputCollection {
         let mut buttons = Vec::new();
         let mut startup_warnings = Vec::new();
 
-        let abs_state = if device.supported_absolute_axes().is_some() {
-            match device.get_abs_state() {
-                Ok(state) => Some(state),
-                Err(err) => {
-                    startup_warnings.push(format!(
-                        "unable to load absolute axis state; using fallback defaults until events arrive: {err}"
-                    ));
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let abs_state = load_startup_state(
+            device.supported_absolute_axes().is_some(),
+            &mut startup_warnings,
+            || device.get_abs_state(),
+            |err| {
+                format!(
+                    "unable to load absolute axis state; using fallback defaults until events arrive: {err}"
+                )
+            },
+        );
 
-        let key_state = if device.supported_keys().is_some() {
-            match device.get_key_state() {
-                Ok(state) => Some(state),
-                Err(err) => {
-                    startup_warnings.push(format!(
-                        "unable to load key/button state; buttons start released until events arrive: {err}"
-                    ));
-                    None
-                }
-            }
-        } else {
-            None
-        };
+        let key_state = load_startup_state(
+            device.supported_keys().is_some(),
+            &mut startup_warnings,
+            || device.get_key_state(),
+            |err| {
+                format!(
+                    "unable to load key/button state; buttons start released until events arrive: {err}"
+                )
+            },
+        );
 
-        // Collect absolute axes
         if let Some(axes) = device.supported_absolute_axes() {
             for axis in axes.iter() {
                 let code = axis.0;
                 absolute.push((
                     code,
-                    DeviceInput {
-                        name: format!("{:?}", AbsoluteAxisCode(code)).to_lowercase(),
-                        input_type: InputKind::Absolute(absolute_state_from_snapshot(
-                            abs_state.as_ref().and_then(|state| {
-                                state.get(code as usize).map(|info| AxisSnapshot {
-                                    min: info.minimum,
-                                    max: info.maximum,
-                                    value: info.value,
-                                })
-                            }),
-                        )),
-                    },
+                    DeviceInput::absolute(
+                        absolute_name(code),
+                        absolute_state_from_snapshot(abs_state.as_ref().and_then(|state| {
+                            state.get(code as usize).map(|info| AxisSnapshot {
+                                min: info.minimum,
+                                max: info.maximum,
+                                value: info.value,
+                            })
+                        })),
+                    ),
                 ));
             }
         }
 
-        // Collect relative axes
         if let Some(axes) = device.supported_relative_axes() {
             for axis in axes.iter() {
                 let code = axis.0;
-                relative.push((
-                    code,
-                    DeviceInput {
-                        name: format!("{:?}", RelativeAxisCode(code)).to_lowercase(),
-                        input_type: InputKind::Relative(0),
-                    },
-                ));
+                relative.push((code, DeviceInput::relative(relative_name(code))));
             }
         }
 
-        // Collect buttons
         if let Some(keys) = device.supported_keys() {
             for key in keys.iter() {
                 if is_touch_contact_button(key) {
@@ -212,10 +218,10 @@ impl InputCollection {
                 let code = key.0;
                 buttons.push((
                     code,
-                    DeviceInput {
-                        name: strip_btn_prefix(&format!("{key:?}").to_lowercase()),
-                        input_type: InputKind::Button(is_key_pressed(key, key_state.as_deref())),
-                    },
+                    DeviceInput::button(
+                        button_name(key),
+                        is_key_pressed(key, key_state.as_deref()),
+                    ),
                 ));
             }
         }
@@ -379,6 +385,37 @@ fn absolute_state_from_snapshot(snapshot: Option<AxisSnapshot>) -> AbsoluteState
             0,
         )
     }
+}
+
+fn load_startup_state<T>(
+    supported: bool,
+    startup_warnings: &mut Vec<String>,
+    load: impl FnOnce() -> io::Result<T>,
+    warning: impl FnOnce(&io::Error) -> String,
+) -> Option<T> {
+    if !supported {
+        return None;
+    }
+
+    match load() {
+        Ok(state) => Some(state),
+        Err(err) => {
+            startup_warnings.push(warning(&err));
+            None
+        }
+    }
+}
+
+fn absolute_name(code: u16) -> String {
+    format!("{:?}", AbsoluteAxisCode(code)).to_lowercase()
+}
+
+fn relative_name(code: u16) -> String {
+    format!("{:?}", RelativeAxisCode(code)).to_lowercase()
+}
+
+fn button_name(code: KeyCode) -> String {
+    strip_btn_prefix(&format!("{code:?}").to_lowercase())
 }
 
 fn is_key_pressed(code: KeyCode, key_state: Option<&AttributeSetRef<KeyCode>>) -> bool {
