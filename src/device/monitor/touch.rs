@@ -1,53 +1,14 @@
-use evdev::{AbsoluteAxisCode, AttributeSetRef, Device, EventType, InputEvent, KeyCode, PropType};
+mod bootstrap;
+mod types;
+
+use evdev::{AbsoluteAxisCode, Device, EventType, InputEvent, KeyCode};
 
 use crate::device::monitor::ComponentBootstrap;
 
-#[derive(Clone, Debug, Default)]
-struct TouchSlot {
-    tracking_id: Option<i32>,
-    x: Option<i32>,
-    y: Option<i32>,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum TouchRange {
-    Unknown,
-    Fixed { min: i32, max: i32 },
-    Observed { min: i32, max: i32 },
-}
-
-impl TouchRange {
-    fn fixed(min: i32, max: i32) -> Self {
-        Self::Fixed { min, max }
-    }
-
-    fn range(&self) -> Option<(i32, i32)> {
-        match self {
-            Self::Unknown => None,
-            Self::Fixed { min, max } | Self::Observed { min, max } => Some((*min, *max)),
-        }
-    }
-
-    fn is_known(&self) -> bool {
-        self.range().is_some()
-    }
-
-    fn observe(&mut self, value: i32) {
-        match self {
-            Self::Unknown => {
-                *self = Self::Observed {
-                    min: value,
-                    max: value,
-                };
-            }
-            Self::Observed { min, max } => {
-                *min = (*min).min(value);
-                *max = (*max).max(value);
-            }
-            Self::Fixed { .. } => {}
-        }
-    }
-}
+use self::{
+    bootstrap::inspect_touch_device,
+    types::{TouchMode, TouchRange, TouchSlot, update_tracking_id},
+};
 
 pub(crate) struct TouchState {
     mode: TouchMode,
@@ -58,94 +19,20 @@ pub(crate) struct TouchState {
     y_range: TouchRange,
 }
 
-#[derive(Clone, Copy, Debug)]
-enum TouchMode {
-    None,
-    MultiTouch { has_slot: bool },
-    SingleTouch { contact_key: Option<KeyCode> },
-}
-
 impl TouchState {
     pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
-        let Some(axes) = device.supported_absolute_axes() else {
+        let Some(bootstrap) = inspect_touch_device(device) else {
             return ComponentBootstrap::new(Self::disabled());
         };
-
-        let supports_mt_x = axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_X);
-        let supports_mt_y = axes.contains(AbsoluteAxisCode::ABS_MT_POSITION_Y);
-        let supports_slot = axes.contains(AbsoluteAxisCode::ABS_MT_SLOT);
-        let supports_abs_x = axes.contains(AbsoluteAxisCode::ABS_X);
-        let supports_abs_y = axes.contains(AbsoluteAxisCode::ABS_Y);
-
-        let properties = device.properties();
-        let has_touch_props = properties.contains(PropType::DIRECT)
-            || properties.contains(PropType::BUTTONPAD)
-            || properties.contains(PropType::SEMI_MT)
-            || properties.contains(PropType::TOPBUTTONPAD);
-        let touch_contact_key = device
-            .supported_keys()
-            .and_then(preferred_touch_contact_key);
-        let has_touch_keys = touch_contact_key.is_some();
-
-        let mode = if supports_mt_x && supports_mt_y {
-            TouchMode::MultiTouch {
-                has_slot: supports_slot,
-            }
-        } else if supports_abs_x && supports_abs_y && (has_touch_props || has_touch_keys) {
-            TouchMode::SingleTouch {
-                contact_key: touch_contact_key,
-            }
-        } else {
-            TouchMode::None
-        };
-
-        if matches!(mode, TouchMode::None) {
-            return ComponentBootstrap::new(Self::disabled());
-        }
-
-        let mut startup_warnings = Vec::new();
-        let abs_state = match device.get_abs_state() {
-            Ok(state) => Some(state),
-            Err(err) => {
-                startup_warnings.push(format!(
-                    "unable to load touch axis state; inferring touch bounds from incoming events: {err}"
-                ));
-                None
-            }
-        };
-
-        let mut x_range = TouchRange::Unknown;
-        let mut y_range = TouchRange::Unknown;
-        let mut slot_limit = None;
-
-        let Some((x_axis, y_axis)) = touch_axes(&mode) else {
-            return ComponentBootstrap::new(Self::disabled());
-        };
-
-        if let Some(abs_state) = abs_state.as_ref() {
-            if let Some(info) = abs_state.get(x_axis.0 as usize) {
-                x_range = TouchRange::fixed(info.minimum, info.maximum);
-            }
-            if let Some(info) = abs_state.get(y_axis.0 as usize) {
-                y_range = TouchRange::fixed(info.minimum, info.maximum);
-            }
-            if matches!(mode, TouchMode::MultiTouch { has_slot: true })
-                && let Some(info) = abs_state.get(AbsoluteAxisCode::ABS_MT_SLOT.0 as usize)
-            {
-                slot_limit = Some(info.maximum.max(0) as usize + 1);
-            }
-        }
-
-        if abs_state.is_some() && (!x_range.is_known() || !y_range.is_known()) {
-            startup_warnings.push(
-                "touch position range is unavailable; inferring touch bounds from incoming events"
-                    .to_string(),
-            );
-        }
 
         ComponentBootstrap {
-            value: Self::from_parts(mode, slot_limit, x_range, y_range),
-            startup_warnings,
+            value: Self::from_parts(
+                bootstrap.mode,
+                bootstrap.slot_limit,
+                bootstrap.x_range,
+                bootstrap.y_range,
+            ),
+            startup_warnings: bootstrap.startup_warnings,
         }
     }
 
@@ -211,14 +98,15 @@ impl TouchState {
     }
 
     pub(crate) fn active_points(&self) -> Vec<(i32, i32)> {
-        self.points_with_tracking(true)
+        self.points_by_tracking_state(true)
     }
 
     pub(crate) fn inactive_points(&self) -> Vec<(i32, i32)> {
         if !self.is_touch_device() {
             return Vec::new();
         }
-        self.points_with_tracking(false)
+
+        self.points_by_tracking_state(false)
     }
 
     pub(crate) fn update(&mut self, event: &InputEvent) {
@@ -228,58 +116,59 @@ impl TouchState {
 
         match (self.mode, event.event_type()) {
             (TouchMode::MultiTouch { .. }, EventType::ABSOLUTE) => {
-                let axis = AbsoluteAxisCode(event.code());
-                let value = event.value();
-                match axis {
-                    AbsoluteAxisCode::ABS_MT_SLOT => {
-                        if value >= 0 {
-                            let slot = value as usize;
-                            if self.slot_supported(slot) {
-                                self.current_slot = slot;
-                                self.ensure_slot();
-                            }
-                        }
-                    }
-                    AbsoluteAxisCode::ABS_MT_TRACKING_ID => {
-                        self.set_current_slot_tracking_id((value >= 0).then_some(value));
-                    }
-                    AbsoluteAxisCode::ABS_MT_POSITION_X => {
-                        self.update_current_slot_x(value);
-                    }
-                    AbsoluteAxisCode::ABS_MT_POSITION_Y => {
-                        self.update_current_slot_y(value);
-                    }
-                    _ => {}
-                }
+                self.handle_multi_touch_absolute(event);
             }
             (TouchMode::SingleTouch { contact_key }, EventType::ABSOLUTE) => {
-                let axis = AbsoluteAxisCode(event.code());
-                let value = event.value();
-                match axis {
-                    AbsoluteAxisCode::ABS_X => self.update_single_touch_x(value),
-                    AbsoluteAxisCode::ABS_Y => self.update_single_touch_y(value),
-                    _ => {}
-                }
-                if contact_key.is_none() {
-                    self.arm_single_touch_without_reset();
-                }
+                self.handle_single_touch_absolute(contact_key, event);
             }
             (
                 TouchMode::SingleTouch {
                     contact_key: Some(_),
                 },
                 EventType::KEY,
-            ) => {
-                let key = KeyCode(event.code());
-                if matches!(key, KeyCode::BTN_TOUCH | KeyCode::BTN_TOOL_FINGER) {
-                    self.set_single_touch_tracking_id((event.value() != 0).then_some(0), true);
-                }
-            }
+            ) => self.handle_single_touch_key(event),
             _ => {}
         }
     }
 
-    fn points_with_tracking(&self, active: bool) -> Vec<(i32, i32)> {
+    fn handle_multi_touch_absolute(&mut self, event: &InputEvent) {
+        let axis = AbsoluteAxisCode(event.code());
+        let value = event.value();
+
+        match axis {
+            AbsoluteAxisCode::ABS_MT_SLOT => self.select_slot(value),
+            AbsoluteAxisCode::ABS_MT_TRACKING_ID => {
+                self.set_current_slot_tracking_id((value >= 0).then_some(value));
+            }
+            AbsoluteAxisCode::ABS_MT_POSITION_X => self.update_current_slot_x(value),
+            AbsoluteAxisCode::ABS_MT_POSITION_Y => self.update_current_slot_y(value),
+            _ => {}
+        }
+    }
+
+    fn handle_single_touch_absolute(&mut self, contact_key: Option<KeyCode>, event: &InputEvent) {
+        let axis = AbsoluteAxisCode(event.code());
+        let value = event.value();
+
+        match axis {
+            AbsoluteAxisCode::ABS_X => self.update_single_touch_x(value),
+            AbsoluteAxisCode::ABS_Y => self.update_single_touch_y(value),
+            _ => {}
+        }
+
+        if contact_key.is_none() {
+            self.arm_single_touch_without_reset();
+        }
+    }
+
+    fn handle_single_touch_key(&mut self, event: &InputEvent) {
+        let key = KeyCode(event.code());
+        if matches!(key, KeyCode::BTN_TOUCH | KeyCode::BTN_TOOL_FINGER) {
+            self.set_single_touch_tracking_id((event.value() != 0).then_some(0), true);
+        }
+    }
+
+    fn points_by_tracking_state(&self, active: bool) -> Vec<(i32, i32)> {
         if !self.is_touch_device() {
             return Vec::new();
         }
@@ -293,6 +182,18 @@ impl TouchState {
             .collect()
     }
 
+    fn select_slot(&mut self, value: i32) {
+        if value < 0 {
+            return;
+        }
+
+        let slot = value as usize;
+        if self.slot_supported(slot) {
+            self.current_slot = slot;
+            self.ensure_slot();
+        }
+    }
+
     fn slot_supported(&self, slot: usize) -> bool {
         match self.slot_limit {
             Some(limit) => slot < limit,
@@ -300,38 +201,58 @@ impl TouchState {
         }
     }
 
-    fn set_current_slot_tracking_id(&mut self, tracking_id: Option<i32>) {
+    fn current_slot_mut(&mut self) -> Option<&mut TouchSlot> {
         self.ensure_slot();
-        update_tracking_id(&mut self.slots[self.current_slot], tracking_id, true);
+        self.slots.get_mut(self.current_slot)
+    }
+
+    fn single_slot_mut(&mut self) -> Option<&mut TouchSlot> {
+        self.slots.first_mut()
+    }
+
+    fn set_current_slot_tracking_id(&mut self, tracking_id: Option<i32>) {
+        if let Some(slot) = self.current_slot_mut() {
+            update_tracking_id(slot, tracking_id, true);
+        }
     }
 
     fn update_current_slot_x(&mut self, value: i32) {
-        self.ensure_slot();
-        self.slots[self.current_slot].x = Some(value);
+        if let Some(slot) = self.current_slot_mut() {
+            slot.x = Some(value);
+        }
         self.x_range.observe(value);
     }
 
     fn update_current_slot_y(&mut self, value: i32) {
-        self.ensure_slot();
-        self.slots[self.current_slot].y = Some(value);
+        if let Some(slot) = self.current_slot_mut() {
+            slot.y = Some(value);
+        }
         self.y_range.observe(value);
     }
 
     fn arm_single_touch_without_reset(&mut self) {
-        self.slots[0].tracking_id = Some(0);
+        if let Some(slot) = self.single_slot_mut() {
+            slot.tracking_id = Some(0);
+        }
     }
 
     fn set_single_touch_tracking_id(&mut self, tracking_id: Option<i32>, clear_position: bool) {
-        update_tracking_id(&mut self.slots[0], tracking_id, clear_position);
+        if let Some(slot) = self.single_slot_mut() {
+            update_tracking_id(slot, tracking_id, clear_position);
+        }
     }
 
     fn update_single_touch_x(&mut self, value: i32) {
-        self.slots[0].x = Some(value);
+        if let Some(slot) = self.single_slot_mut() {
+            slot.x = Some(value);
+        }
         self.x_range.observe(value);
     }
 
     fn update_single_touch_y(&mut self, value: i32) {
-        self.slots[0].y = Some(value);
+        if let Some(slot) = self.single_slot_mut() {
+            slot.y = Some(value);
+        }
         self.y_range.observe(value);
     }
 
@@ -353,40 +274,14 @@ impl TouchState {
     }
 }
 
-fn touch_axes(mode: &TouchMode) -> Option<(AbsoluteAxisCode, AbsoluteAxisCode)> {
-    match mode {
-        TouchMode::MultiTouch { .. } => Some((
-            AbsoluteAxisCode::ABS_MT_POSITION_X,
-            AbsoluteAxisCode::ABS_MT_POSITION_Y,
-        )),
-        TouchMode::SingleTouch { .. } => Some((AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y)),
-        TouchMode::None => None,
-    }
-}
-
-fn update_tracking_id(slot: &mut TouchSlot, tracking_id: Option<i32>, clear_position: bool) {
-    slot.tracking_id = tracking_id;
-    if tracking_id.is_some() && clear_position {
-        slot.x = None;
-        slot.y = None;
-    }
-}
-
-fn preferred_touch_contact_key(keys: &AttributeSetRef<KeyCode>) -> Option<KeyCode> {
-    if keys.contains(KeyCode::BTN_TOUCH) {
-        Some(KeyCode::BTN_TOUCH)
-    } else if keys.contains(KeyCode::BTN_TOOL_FINGER) {
-        Some(KeyCode::BTN_TOOL_FINGER)
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use evdev::{AbsoluteAxisCode, AttributeSet, EventType, InputEvent, KeyCode};
+    use evdev::{AbsoluteAxisCode, EventType, InputEvent, KeyCode};
 
-    use super::{TouchMode, TouchRange, TouchState, preferred_touch_contact_key};
+    use super::{
+        TouchState,
+        types::{TouchMode, TouchRange},
+    };
 
     fn abs(axis: AbsoluteAxisCode, value: i32) -> InputEvent {
         InputEvent::new(EventType::ABSOLUTE.0, axis.0, value)
@@ -430,15 +325,6 @@ mod tests {
             TouchRange::Unknown,
             TouchRange::Unknown,
         )
-    }
-
-    #[test]
-    fn preferred_touch_contact_key_prefers_btn_touch() {
-        let mut keys = AttributeSet::new();
-        keys.insert(KeyCode::BTN_TOOL_FINGER);
-        keys.insert(KeyCode::BTN_TOUCH);
-
-        assert_eq!(preferred_touch_contact_key(&keys), Some(KeyCode::BTN_TOUCH));
     }
 
     #[test]
