@@ -1,5 +1,7 @@
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 
+const PAGE_SCROLL_SIZE: i32 = 10;
+
 pub(super) struct FilterState {
     indexes: Vec<usize>,
     selected_index: usize,
@@ -40,6 +42,22 @@ impl FilterState {
         self.selected_index = target.clamp(0, max_index as i32) as usize;
     }
 
+    pub(super) fn move_up(&mut self) {
+        self.move_selection_by(-1);
+    }
+
+    pub(super) fn move_down(&mut self) {
+        self.move_selection_by(1);
+    }
+
+    pub(super) fn page_up(&mut self) {
+        self.move_selection_by(-PAGE_SCROLL_SIZE);
+    }
+
+    pub(super) fn page_down(&mut self) {
+        self.move_selection_by(PAGE_SCROLL_SIZE);
+    }
+
     pub(super) fn select_first(&mut self) {
         self.selected_index = 0;
     }
@@ -48,6 +66,14 @@ impl FilterState {
         if let Some(last_index) = self.indexes.len().checked_sub(1) {
             self.selected_index = last_index;
         }
+    }
+
+    pub(super) fn home(&mut self) {
+        self.select_first();
+    }
+
+    pub(super) fn end(&mut self) {
+        self.select_last();
     }
 
     pub(super) fn add_char(&mut self, c: char) {
@@ -159,5 +185,19 @@ mod tests {
         filter.select_last();
 
         assert_eq!(filter.selected_item_index(), Some(3));
+    }
+
+    #[test]
+    fn page_navigation_uses_the_shared_page_size() {
+        let mut filter = FilterState::new(25);
+
+        filter.page_down();
+        assert_eq!(filter.selected_index(), 10);
+
+        filter.page_down();
+        assert_eq!(filter.selected_index(), 20);
+
+        filter.page_up();
+        assert_eq!(filter.selected_index(), 10);
     }
 }

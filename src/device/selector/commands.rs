@@ -1,10 +1,5 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use super::{
-    PAGE_SCROLL_SIZE,
-    state::{BackAction, SelectionAction, SelectorState},
-};
-
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum SelectorMode {
     Browsing,
@@ -34,13 +29,6 @@ pub(crate) enum SelectorCommand {
     Home,
     End,
     None,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectorEffect {
-    Exit,
-    RefreshDevices,
-    OpenSelection,
 }
 
 pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
@@ -85,69 +73,6 @@ pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand 
             }
             _ => SelectorCommand::None,
         },
-    }
-}
-
-pub(crate) fn apply_command(
-    state: &mut SelectorState,
-    command: SelectorCommand,
-) -> Option<SelectorEffect> {
-    match command {
-        SelectorCommand::Exit => Some(SelectorEffect::Exit),
-        SelectorCommand::Back => match state.back_action() {
-            BackAction::Exit => Some(SelectorEffect::Exit),
-            BackAction::ClearSearch => {
-                state.clear_search();
-                None
-            }
-        },
-        SelectorCommand::ToggleHelp => {
-            state.toggle_help();
-            None
-        }
-        SelectorCommand::Refresh => Some(SelectorEffect::RefreshDevices),
-        SelectorCommand::Select => match state.selection_action() {
-            Some(SelectionAction::Refresh) => Some(SelectorEffect::RefreshDevices),
-            Some(SelectionAction::OpenSelected) => Some(SelectorEffect::OpenSelection),
-            None => None,
-        },
-        SelectorCommand::ClearSearch => {
-            state.clear_search();
-            None
-        }
-        SelectorCommand::DeleteChar => {
-            state.remove_char();
-            None
-        }
-        SelectorCommand::AddChar(c) => {
-            state.add_char(c);
-            None
-        }
-        SelectorCommand::MoveUp => {
-            state.move_selection_by(-1);
-            None
-        }
-        SelectorCommand::MoveDown => {
-            state.move_selection_by(1);
-            None
-        }
-        SelectorCommand::PageUp => {
-            state.move_selection_by(-(PAGE_SCROLL_SIZE as i32));
-            None
-        }
-        SelectorCommand::PageDown => {
-            state.move_selection_by(PAGE_SCROLL_SIZE as i32);
-            None
-        }
-        SelectorCommand::Home => {
-            state.select_first();
-            None
-        }
-        SelectorCommand::End => {
-            state.select_last();
-            None
-        }
-        SelectorCommand::None => None,
     }
 }
 

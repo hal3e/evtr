@@ -11,15 +11,13 @@ use futures::StreamExt;
 use ratatui::DefaultTerminal;
 
 use self::{
-    commands::{SelectorEffect, apply_command, command_for},
+    commands::command_for,
     discovery::discover_devices,
-    state::SelectorState,
+    state::{SelectorState, SelectorTransition},
     view::render_selector,
 };
 use super::State;
 use crate::error::{Error, ErrorArea, Result};
-
-const PAGE_SCROLL_SIZE: usize = 10;
 
 #[derive(Debug)]
 pub struct DeviceInfo {
@@ -90,25 +88,22 @@ impl DeviceSelector {
 
     fn handle_key_press(&mut self, key: KeyEvent) -> Option<State> {
         let mode = self.state.mode();
-        if mode.is_browsing() {
-            self.state.clear_error_message();
-        }
-        let effect = apply_command(&mut self.state, command_for(key, mode));
-        self.handle_effect(effect)
+        let transition = self.state.reduce(command_for(key, mode));
+        self.handle_transition(transition)
     }
 
-    fn handle_effect(&mut self, effect: Option<SelectorEffect>) -> Option<State> {
-        match effect {
-            Some(SelectorEffect::Exit) => Some(State::Exit),
-            Some(SelectorEffect::RefreshDevices) => {
+    fn handle_transition(&mut self, transition: SelectorTransition) -> Option<State> {
+        match transition {
+            SelectorTransition::Stay => None,
+            SelectorTransition::Exit => Some(State::Exit),
+            SelectorTransition::RefreshDevices => {
                 self.refresh_devices();
                 None
             }
-            Some(SelectorEffect::OpenSelection) => self
+            SelectorTransition::OpenSelection => self
                 .state
                 .take_selected_device()
                 .map(|device| State::Monitor(Box::new(device))),
-            None => None,
         }
     }
 }

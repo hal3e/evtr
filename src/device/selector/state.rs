@@ -1,18 +1,18 @@
 mod filter;
 
 use self::filter::FilterState;
-use super::{DeviceInfo, commands::SelectorMode, discovery::DiscoveryResult};
+use super::{
+    DeviceInfo,
+    commands::{SelectorCommand, SelectorMode},
+    discovery::DiscoveryResult,
+};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum BackAction {
+pub(crate) enum SelectorTransition {
+    Stay,
     Exit,
-    ClearSearch,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectionAction {
-    Refresh,
-    OpenSelected,
+    RefreshDevices,
+    OpenSelection,
 }
 
 pub(crate) struct SelectorState {
@@ -45,65 +45,62 @@ impl SelectorState {
         self.error_message = error_message;
     }
 
-    pub(crate) fn clear_error_message(&mut self) {
-        self.error_message = None;
-    }
-
     pub(crate) fn mode(&self) -> SelectorMode {
         self.mode
     }
 
-    pub(crate) fn back_action(&self) -> BackAction {
-        if self.filter.has_query() {
-            BackAction::ClearSearch
-        } else {
-            BackAction::Exit
-        }
-    }
-
-    pub(crate) fn move_selection_by(&mut self, delta: i32) {
-        self.filter.move_selection_by(delta);
-    }
-
-    pub(crate) fn select_first(&mut self) {
-        self.filter.select_first();
-    }
-
-    pub(crate) fn select_last(&mut self) {
-        self.filter.select_last();
-    }
-
-    pub(crate) fn add_char(&mut self, c: char) {
-        self.filter.add_char(c);
-        self.refresh_filter();
-    }
-
-    pub(crate) fn remove_char(&mut self) {
-        self.filter.remove_char();
-        self.refresh_filter();
-    }
-
-    pub(crate) fn clear_search(&mut self) {
-        self.filter.clear_search();
-        self.refresh_filter();
-    }
-
-    pub(crate) fn toggle_help(&mut self) {
-        self.mode = match self.mode {
-            SelectorMode::Browsing => SelectorMode::Help,
-            SelectorMode::Help => SelectorMode::Browsing,
-        };
-    }
-
-    pub(crate) fn selection_action(&self) -> Option<SelectionAction> {
-        if self.filter.indexes().is_empty() {
-            return Some(SelectionAction::Refresh);
+    pub(crate) fn reduce(&mut self, command: SelectorCommand) -> SelectorTransition {
+        if self.mode.is_browsing() {
+            self.error_message = None;
         }
 
-        self.filter
-            .selected_item_index()
-            .filter(|index| *index < self.devices.len())
-            .map(|_| SelectionAction::OpenSelected)
+        match command {
+            SelectorCommand::Exit => SelectorTransition::Exit,
+            SelectorCommand::Back => self.back_transition(),
+            SelectorCommand::ToggleHelp => {
+                self.toggle_help();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::Refresh => SelectorTransition::RefreshDevices,
+            SelectorCommand::Select => self.select_transition(),
+            SelectorCommand::ClearSearch => {
+                self.clear_search();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::DeleteChar => {
+                self.remove_char();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::AddChar(c) => {
+                self.add_char(c);
+                SelectorTransition::Stay
+            }
+            SelectorCommand::MoveUp => {
+                self.filter.move_up();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::MoveDown => {
+                self.filter.move_down();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::PageUp => {
+                self.filter.page_up();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::PageDown => {
+                self.filter.page_down();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::Home => {
+                self.filter.home();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::End => {
+                self.filter.end();
+                SelectorTransition::Stay
+            }
+            SelectorCommand::None => SelectorTransition::Stay,
+        }
     }
 
     pub(crate) fn take_selected_device(&mut self) -> Option<DeviceInfo> {
@@ -140,6 +137,53 @@ impl SelectorState {
     fn refresh_filter(&mut self) {
         self.filter.refresh(&self.devices, device_identifier);
     }
+
+    fn back_transition(&mut self) -> SelectorTransition {
+        if self.filter.has_query() {
+            self.clear_search();
+            SelectorTransition::Stay
+        } else {
+            SelectorTransition::Exit
+        }
+    }
+
+    fn select_transition(&self) -> SelectorTransition {
+        if self.filter.indexes().is_empty() {
+            return SelectorTransition::RefreshDevices;
+        }
+
+        if self
+            .filter
+            .selected_item_index()
+            .is_some_and(|index| index < self.devices.len())
+        {
+            SelectorTransition::OpenSelection
+        } else {
+            SelectorTransition::Stay
+        }
+    }
+
+    fn add_char(&mut self, c: char) {
+        self.filter.add_char(c);
+        self.refresh_filter();
+    }
+
+    fn remove_char(&mut self) {
+        self.filter.remove_char();
+        self.refresh_filter();
+    }
+
+    fn clear_search(&mut self) {
+        self.filter.clear_search();
+        self.refresh_filter();
+    }
+
+    fn toggle_help(&mut self) {
+        self.mode = match self.mode {
+            SelectorMode::Browsing => SelectorMode::Help,
+            SelectorMode::Help => SelectorMode::Browsing,
+        };
+    }
 }
 
 fn device_identifier(device: &DeviceInfo) -> &str {
@@ -148,7 +192,8 @@ fn device_identifier(device: &DeviceInfo) -> &str {
 
 #[cfg(test)]
 mod tests {
-    use super::{BackAction, SelectionAction, SelectorState};
+    use super::{SelectorState, SelectorTransition};
+    use crate::device::selector::commands::SelectorCommand;
     use crate::device::selector::discovery::DiscoveryResult;
 
     #[test]
@@ -175,23 +220,63 @@ mod tests {
     }
 
     #[test]
-    fn back_action_exits_only_when_search_is_empty() {
+    fn reduce_back_exits_only_when_search_is_empty() {
         let mut state = SelectorState::new(DiscoveryResult::new(), None);
-        for c in "mouse".chars() {
-            state.add_char(c);
-        }
+        state.reduce(SelectorCommand::AddChar('m'));
 
-        assert_eq!(state.back_action(), BackAction::ClearSearch);
+        assert_eq!(
+            state.reduce(SelectorCommand::Back),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.search_query(), "");
 
-        state.clear_search();
-
-        assert_eq!(state.back_action(), BackAction::Exit);
+        assert_eq!(
+            state.reduce(SelectorCommand::Back),
+            SelectorTransition::Exit
+        );
     }
 
     #[test]
-    fn selection_action_refreshes_when_no_results_exist() {
-        let state = SelectorState::new(DiscoveryResult::new(), None);
+    fn reduce_select_refreshes_when_no_results_exist() {
+        let mut state = SelectorState::new(DiscoveryResult::new(), None);
 
-        assert_eq!(state.selection_action(), Some(SelectionAction::Refresh));
+        assert_eq!(
+            state.reduce(SelectorCommand::Select),
+            SelectorTransition::RefreshDevices
+        );
+    }
+
+    #[test]
+    fn reduce_none_clears_error_while_browsing() {
+        let mut state = SelectorState::new(
+            DiscoveryResult::new(),
+            Some("unable to read /dev/input".to_string()),
+        );
+
+        assert_eq!(
+            state.reduce(SelectorCommand::None),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.error_message(), None);
+    }
+
+    #[test]
+    fn reduce_none_keeps_error_while_help_is_open() {
+        let mut state = SelectorState::new(
+            DiscoveryResult::new(),
+            Some("unable to read /dev/input".to_string()),
+        );
+
+        assert_eq!(
+            state.reduce(SelectorCommand::ToggleHelp),
+            SelectorTransition::Stay
+        );
+        state.error_message = Some("unable to read /dev/input".to_string());
+
+        assert_eq!(
+            state.reduce(SelectorCommand::None),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.error_message(), Some("unable to read /dev/input"));
     }
 }
