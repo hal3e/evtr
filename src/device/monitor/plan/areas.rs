@@ -6,7 +6,7 @@ use crate::device::widgets;
 use super::Counts;
 use crate::device::monitor::{
     config,
-    layout::{axes_layout, box_layout, split_buttons_column},
+    layout::{BoxRequest, axes_layout, box_layout, split_buttons_column},
     model::InputCollection,
     render::{hat::HatState, joystick::JoystickState},
     state::{Focus, MonitorState},
@@ -127,23 +127,27 @@ pub(super) fn plan_areas(
     let (layout, buttons_box) = if let Some(buttons_area) = buttons_column {
         let layout = box_layout(
             main_area,
-            widget_state.joystick_present(),
-            widget_state.joystick_count,
-            widget_state.hat_present(),
-            touch_present,
-            axes_present,
-            false,
+            BoxRequest::new(
+                widget_state.joystick_present(),
+                widget_state.joystick_count,
+                widget_state.hat_present(),
+                touch_present,
+                axes_present,
+                false,
+            ),
         );
         (layout, Some(buttons_area))
     } else {
         let layout = box_layout(
             main_area,
-            widget_state.joystick_present(),
-            widget_state.joystick_count,
-            widget_state.hat_present(),
-            touch_present,
-            axes_present,
-            buttons_present,
+            BoxRequest::new(
+                widget_state.joystick_present(),
+                widget_state.joystick_count,
+                widget_state.hat_present(),
+                touch_present,
+                axes_present,
+                buttons_present,
+            ),
         );
         let buttons_box = layout.buttons_box;
         (layout, buttons_box)

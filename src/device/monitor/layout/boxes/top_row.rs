@@ -192,12 +192,13 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::{TopRowLayout, TopRowRequest, plan_top_row};
-    use crate::device::monitor::layout::boxes::BoxMinimums;
+    use crate::device::monitor::layout::boxes::{BoxMinimums, BoxRequest};
 
     #[test]
     fn plan_top_row_prefers_side_by_side_when_both_fit() {
         let area = Rect::new(0, 0, 60, 12);
-        let minimums = BoxMinimums::new(true, true, false, false, false);
+        let minimums =
+            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
 
         let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
 
@@ -207,7 +208,8 @@ mod tests {
     #[test]
     fn plan_top_row_prefers_hat_when_only_hat_fits_split_layout() {
         let area = Rect::new(0, 0, 20, 12);
-        let minimums = BoxMinimums::new(true, true, false, false, false);
+        let minimums =
+            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
 
         let plan = plan_top_row(area, 2, minimums, TopRowRequest::Both);
 
@@ -217,7 +219,8 @@ mod tests {
     #[test]
     fn plan_top_row_falls_back_to_joystick_when_neither_split_widget_fits() {
         let area = Rect::new(0, 0, 12, 6);
-        let minimums = BoxMinimums::new(true, true, false, false, false);
+        let minimums =
+            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
 
         let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
 
