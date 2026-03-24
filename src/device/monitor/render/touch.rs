@@ -10,6 +10,8 @@ use ratatui::{
 
 use crate::device::monitor::config;
 
+use super::geometry::{canvas_range, clamp_i32, invert_in_range};
+
 pub(crate) struct TouchRenderer;
 
 impl TouchRenderer {
@@ -25,8 +27,8 @@ impl TouchRenderer {
             return;
         }
 
-        let (min_x, max_x) = normalize_range(x_range);
-        let (min_y, max_y) = normalize_range(y_range);
+        let (min_x, max_x) = canvas_range(x_range);
+        let (min_y, max_y) = canvas_range(y_range);
 
         let inactive = normalize_points(inactive_points, min_x, max_x, min_y, max_y);
         let active = normalize_points(active_points, min_x, max_x, min_y, max_y);
@@ -57,47 +59,26 @@ fn normalize_points(
     points
         .iter()
         .map(|(x, y)| {
-            let clamped_x = clamp(*x, min_x, max_x);
-            let clamped_y = clamp(*y, min_y, max_y);
-            let inverted_y = max_y - (clamped_y - min_y);
+            let clamped_x = clamp_i32(*x, min_x, max_x);
+            let inverted_y = invert_in_range(*y, min_y, max_y);
             (f64::from(clamped_x), f64::from(inverted_y))
         })
         .collect()
 }
 
-fn normalize_range(range: (i32, i32)) -> (i32, i32) {
-    let (mut min, mut max) = range;
-    if min > max {
-        std::mem::swap(&mut min, &mut max);
-    }
-    if min == max {
-        max = min.saturating_add(1);
-    }
-    (min, max)
-}
-
-fn clamp(value: i32, min: i32, max: i32) -> i32 {
-    if value < min {
-        min
-    } else if value > max {
-        max
-    } else {
-        value
-    }
-}
-
 #[cfg(test)]
 mod tests {
-    use super::{normalize_points, normalize_range};
+    use super::normalize_points;
+    use crate::device::monitor::render::geometry::canvas_range;
 
     #[test]
     fn normalize_range_swaps_reversed_bounds() {
-        assert_eq!(normalize_range((10, -5)), (-5, 10));
+        assert_eq!(canvas_range((10, -5)), (-5, 10));
     }
 
     #[test]
     fn normalize_range_expands_zero_span() {
-        assert_eq!(normalize_range((7, 7)), (7, 8));
+        assert_eq!(canvas_range((7, 7)), (7, 8));
     }
 
     #[test]

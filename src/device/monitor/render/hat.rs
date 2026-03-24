@@ -10,6 +10,8 @@ use ratatui::{
 
 use crate::device::monitor::{config, model::AbsoluteAxis};
 
+use super::geometry::{coord_from_index, fit_centered_aspect_rect, inset_rect};
+
 #[derive(Clone, Copy)]
 pub(crate) struct HatState {
     pub(crate) x: i32,
@@ -34,22 +36,9 @@ pub(crate) struct HatRenderer;
 
 impl HatRenderer {
     pub(crate) fn render(area: Rect, state: HatState, buf: &mut Buffer) {
-        if area.width < 2 || area.height < 2 {
+        let Some(square) = fit_centered_aspect_rect(area, config::JOYSTICK_ASPECT_RATIO) else {
             return;
-        }
-
-        let ratio = config::JOYSTICK_ASPECT_RATIO.max(1);
-        let max_width = area.width;
-        let max_height = area.height;
-        let height = max_height.min(max_width.saturating_div(ratio));
-        let width = height.saturating_mul(ratio);
-        if width < 2 || height < 2 {
-            return;
-        }
-
-        let x = area.x + (area.width.saturating_sub(width)) / 2;
-        let y = area.y + (area.height.saturating_sub(height)) / 2;
-        let square = Rect::new(x, y, width, height);
+        };
         let square = inset_rect(square, config::HAT_PADDING);
         if square.width < 2 || square.height < 2 {
             return;
@@ -198,24 +187,4 @@ fn centered_indices(total: usize, count: usize) -> Vec<usize> {
     let count = count.min(total).max(1);
     let start = (total.saturating_sub(count)) / 2;
     (start..start.saturating_add(count)).collect()
-}
-
-fn coord_from_index(index: usize, total: usize) -> f64 {
-    if total <= 1 {
-        0.0
-    } else {
-        -1.0 + (index as f64) * 2.0 / (total as f64 - 1.0)
-    }
-}
-
-fn inset_rect(rect: Rect, padding: u16) -> Rect {
-    if rect.width <= padding * 2 || rect.height <= padding * 2 {
-        return rect;
-    }
-    Rect::new(
-        rect.x + padding,
-        rect.y + padding,
-        rect.width.saturating_sub(padding * 2),
-        rect.height.saturating_sub(padding * 2),
-    )
 }

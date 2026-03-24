@@ -1,3 +1,5 @@
+mod geometry;
+
 pub mod axis;
 pub mod buttons;
 pub mod frame;
