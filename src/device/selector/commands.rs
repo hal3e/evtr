@@ -140,13 +140,11 @@ pub(crate) fn apply_command(
             None
         }
         SelectorCommand::Home => {
-            state.select_index(0);
+            state.select_first();
             None
         }
         SelectorCommand::End => {
-            if let Some(last_index) = state.filtered_indexes().len().checked_sub(1) {
-                state.select_index(last_index);
-            }
+            state.select_last();
             None
         }
         SelectorCommand::None => None,
