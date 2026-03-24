@@ -7,7 +7,7 @@ use crate::device::monitor::config;
 
 pub(crate) use self::split::split_buttons_column;
 
-use self::top_row::{place_top_row, plan_top_row};
+use self::top_row::{TopRowRequest, place_top_row, plan_top_row};
 
 pub(crate) struct BoxLayout {
     pub(crate) joystick_box: Option<Rect>,
@@ -72,13 +72,12 @@ pub(crate) fn box_layout(
         area,
         joystick_columns,
         minimums,
-        joystick_present,
-        hat_present,
+        TopRowRequest::new(joystick_present, hat_present),
     );
-    let remaining_after_top = area.height.saturating_sub(top_row.height);
+    let remaining_after_top = area.height.saturating_sub(top_row.height());
     let (touch_present, touch_height) =
         allocate_touch(remaining_after_top, touch_present, minimums);
-    let remaining_height = area.height.saturating_sub(top_row.height + touch_height);
+    let remaining_height = area.height.saturating_sub(top_row.height() + touch_height);
     let (axes_height, buttons_height) =
         allocate_lower_sections(remaining_height, axes_present, buttons_present, minimums);
 
