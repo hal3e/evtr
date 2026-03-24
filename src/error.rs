@@ -54,6 +54,20 @@ impl Error {
     }
 }
 
+impl ErrorArea {
+    pub(crate) fn io(self, context: impl Into<String>, source: io::Error) -> Error {
+        Error::io(self, context, source)
+    }
+
+    pub(crate) fn evdev(self, context: impl Into<String>, source: io::Error) -> Error {
+        Error::evdev(self, context, source)
+    }
+
+    pub(crate) fn stream_ended(self, context: &'static str) -> Error {
+        Error::stream_ended(self, context)
+    }
+}
+
 impl fmt::Display for ErrorArea {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -101,12 +115,11 @@ impl error::Error for Error {
 mod tests {
     use std::{error::Error as _, io};
 
-    use super::{Error, ErrorArea};
+    use super::ErrorArea;
 
     #[test]
     fn preserves_monitor_evdev_source() {
-        let err = Error::evdev(
-            ErrorArea::Monitor,
+        let err = ErrorArea::Monitor.evdev(
             "open device stream",
             io::Error::new(io::ErrorKind::PermissionDenied, "denied"),
         );
@@ -120,8 +133,7 @@ mod tests {
 
     #[test]
     fn preserves_app_io_source() {
-        let err = Error::io(
-            ErrorArea::App,
+        let err = ErrorArea::App.io(
             "init terminal",
             io::Error::new(io::ErrorKind::BrokenPipe, "closed"),
         );
@@ -135,7 +147,7 @@ mod tests {
 
     #[test]
     fn selector_stream_end_reports_area() {
-        let err = Error::stream_ended(ErrorArea::Selector, "terminal event stream");
+        let err = ErrorArea::Selector.stream_ended("terminal event stream");
 
         assert_eq!(
             err.to_string(),

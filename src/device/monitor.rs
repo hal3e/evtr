@@ -25,7 +25,7 @@ use self::{
 };
 use crate::{
     device::selector::DeviceInfo,
-    error::{Error, ErrorArea, Result},
+    error::{ErrorArea, Result},
 };
 
 pub(crate) enum MonitorExit {
@@ -91,11 +91,7 @@ impl DeviceMonitor {
             &bootstrap.startup_warnings,
         );
         let device_stream = device.into_event_stream().map_err(|err| {
-            Error::evdev(
-                ErrorArea::Monitor,
-                format!("open device stream ({identifier})"),
-                err,
-            )
+            ErrorArea::Monitor.evdev(format!("open device stream ({identifier})"), err)
         })?;
 
         Ok(Self {
@@ -117,7 +113,7 @@ impl DeviceMonitor {
         loop {
             terminal
                 .draw(|frame| monitor.render(frame.area(), frame.buffer_mut()))
-                .map_err(|err| Error::io(ErrorArea::Monitor, "monitor draw", err))?;
+                .map_err(|err| ErrorArea::Monitor.io("monitor draw", err))?;
 
             select! {
                 event = term_events.next() => {
@@ -126,7 +122,7 @@ impl DeviceMonitor {
                             let area = terminal
                                 .size()
                                 .map(Rect::from)
-                                .map_err(|err| Error::io(ErrorArea::Monitor, "terminal size", err))?;
+                                .map_err(|err| ErrorArea::Monitor.io("terminal size", err))?;
                             let plan = monitor.sync_render_plan(area);
                             if let Some(exit) = apply_command(
                                 command_for(key, monitor.state.active_popup()),
@@ -139,27 +135,17 @@ impl DeviceMonitor {
                         }
                         Some(Ok(_)) => {}
                         Some(Err(err)) => {
-                            return Err(Error::io(
-                                ErrorArea::Monitor,
-                                "terminal event stream",
-                                err,
-                            ));
+                            return Err(ErrorArea::Monitor.io("terminal event stream", err));
                         }
                         None => {
-                            return Err(Error::stream_ended(
-                                ErrorArea::Monitor,
-                                "terminal event stream",
-                            ));
+                            return Err(ErrorArea::Monitor.stream_ended("terminal event stream"));
                         }
                     }
                 }
                 event = monitor.device_stream.next_event() => {
                     let event = event.map_err(|err| {
-                        Error::evdev(
-                            ErrorArea::Monitor,
-                            format!("device event stream ({})", monitor.identifier),
-                            err,
-                        )
+                        ErrorArea::Monitor
+                            .evdev(format!("device event stream ({})", monitor.identifier), err)
                     })?;
                     monitor.inputs.handle_event(&event);
                     monitor.touch.update(&event);

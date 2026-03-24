@@ -7,16 +7,19 @@ use ratatui::{
 
 use super::theme;
 
+fn titled_block<'a>(title: &'a str, title_alignment: Alignment) -> Block<'a> {
+    Block::default()
+        .borders(Borders::ALL)
+        .title(title)
+        .title_alignment(title_alignment)
+}
+
 pub(crate) fn styled_titled_block<'a>(
     title: &'a str,
     style: Style,
     title_alignment: Alignment,
 ) -> Block<'a> {
-    Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .title_alignment(title_alignment)
-        .style(style)
+    titled_block(title, title_alignment).style(style)
 }
 
 pub(crate) fn bordered_titled_block<'a>(
@@ -24,11 +27,7 @@ pub(crate) fn bordered_titled_block<'a>(
     border_style: Style,
     title_alignment: Alignment,
 ) -> Block<'a> {
-    Block::default()
-        .borders(Borders::ALL)
-        .title(title)
-        .title_alignment(title_alignment)
-        .border_style(border_style)
+    titled_block(title, title_alignment).border_style(border_style)
 }
 
 pub(crate) fn accent_titled_block<'a>(title: &'a str) -> Block<'a> {
@@ -53,22 +52,17 @@ pub(crate) fn render_bordered_titled_box(
 }
 
 pub(crate) fn render_panel_box(area: Rect, title: &str, focused: bool, buf: &mut Buffer) -> Rect {
-    let style = if focused {
-        theme::style_panel_focused()
-    } else {
-        theme::style_panel_unfocused()
-    };
-    render_bordered_titled_box(area, title, style, Alignment::Left, buf)
-}
-
-pub(crate) fn render_unfocused_panel_box(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
     render_bordered_titled_box(
         area,
         title,
-        theme::style_panel_unfocused(),
+        panel_border_style(focused),
         Alignment::Left,
         buf,
     )
+}
+
+pub(crate) fn render_unfocused_panel_box(area: Rect, title: &str, buf: &mut Buffer) -> Rect {
+    render_panel_box(area, title, false, buf)
 }
 
 pub(crate) fn bordered_box_inner(area: Rect) -> Rect {
@@ -76,6 +70,14 @@ pub(crate) fn bordered_box_inner(area: Rect) -> Rect {
         Rect::new(area.x + 1, area.y + 1, area.width - 2, area.height - 2)
     } else {
         area
+    }
+}
+
+fn panel_border_style(focused: bool) -> Style {
+    if focused {
+        theme::style_panel_focused()
+    } else {
+        theme::style_panel_unfocused()
     }
 }
 

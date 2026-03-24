@@ -17,7 +17,7 @@ use self::{
     view::render_selector,
 };
 use super::State;
-use crate::error::{Error, ErrorArea, Result};
+use crate::error::{ErrorArea, Result};
 
 #[derive(Debug)]
 pub struct DeviceInfo {
@@ -64,7 +64,7 @@ impl DeviceSelector {
                 .draw(|frame| {
                     render_selector(&selector.state, frame.area(), frame.buffer_mut());
                 })
-                .map_err(|err| Error::io(ErrorArea::Selector, "selector draw", err))?;
+                .map_err(|err| ErrorArea::Selector.io("selector draw", err))?;
 
             match term_events.next().await {
                 Some(Ok(Event::Key(key))) if key.kind == KeyEventKind::Press => {
@@ -74,13 +74,10 @@ impl DeviceSelector {
                 }
                 Some(Ok(_)) => {}
                 Some(Err(err)) => {
-                    return Err(Error::io(ErrorArea::Selector, "terminal event stream", err));
+                    return Err(ErrorArea::Selector.io("terminal event stream", err));
                 }
                 None => {
-                    return Err(Error::stream_ended(
-                        ErrorArea::Selector,
-                        "terminal event stream",
-                    ));
+                    return Err(ErrorArea::Selector.stream_ended("terminal event stream"));
                 }
             }
         }

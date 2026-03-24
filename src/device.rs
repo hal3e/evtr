@@ -9,7 +9,7 @@ use std::mem;
 
 use ratatui::DefaultTerminal;
 
-use crate::error::{Error, ErrorArea, Result};
+use crate::error::{ErrorArea, Result};
 use monitor::{DeviceMonitor, MonitorExit};
 use selector::DeviceSelector;
 
@@ -21,8 +21,7 @@ pub struct Evtr {
 impl Evtr {
     pub fn new() -> Result<Self> {
         Ok(Self {
-            terminal: ratatui::try_init()
-                .map_err(|err| Error::io(ErrorArea::App, "init terminal", err))?,
+            terminal: ratatui::try_init().map_err(|err| ErrorArea::App.io("init terminal", err))?,
             state: State::new(),
         })
     }
