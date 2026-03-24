@@ -3,39 +3,115 @@ use std::{io, path::PathBuf};
 use super::issue::DiscoveryIssue;
 
 #[derive(Debug)]
-struct DiscoveryError {
+struct DiscoveryErrorSample {
     path: PathBuf,
     message: String,
 }
 
-impl DiscoveryError {
+impl DiscoveryErrorSample {
     fn new(path: impl Into<PathBuf>, err: io::Error) -> Self {
         Self {
             path: path.into(),
             message: err.to_string(),
         }
     }
+
+    fn read_dir_issue(&self) -> DiscoveryIssue {
+        DiscoveryIssue::ReadDir {
+            path: self.path.clone(),
+            message: self.message.clone(),
+        }
+    }
+
+    fn open_failed_issue(&self, skipped: usize) -> DiscoveryIssue {
+        DiscoveryIssue::OpenFailed {
+            skipped,
+            path: self.path.clone(),
+            message: self.message.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct SampledFailures {
+    count: usize,
+    first: Option<DiscoveryErrorSample>,
+}
+
+impl SampledFailures {
+    fn record(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+        self.count += 1;
+        if self.first.is_none() {
+            self.first = Some(DiscoveryErrorSample::new(path, err));
+        }
+    }
+
+    fn count(&self) -> usize {
+        self.count
+    }
+
+    fn first_read_dir_issue(&self) -> Option<DiscoveryIssue> {
+        self.first
+            .as_ref()
+            .map(DiscoveryErrorSample::read_dir_issue)
+    }
+
+    fn first_open_failed_issue(&self, skipped: usize) -> Option<DiscoveryIssue> {
+        self.first
+            .as_ref()
+            .map(|sample| sample.open_failed_issue(skipped))
+    }
+}
+
+#[derive(Debug, Default)]
+struct OpenFailures {
+    permission_denied: usize,
+    other: SampledFailures,
+}
+
+impl OpenFailures {
+    fn record(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+        if err.kind() == io::ErrorKind::PermissionDenied {
+            self.permission_denied += 1;
+            return;
+        }
+
+        self.other.record(path, err);
+    }
+
+    fn total(&self) -> usize {
+        self.permission_denied + self.other.count()
+    }
+
+    fn issue(&self) -> Option<DiscoveryIssue> {
+        let skipped = self.total();
+        if skipped == 0 {
+            return None;
+        }
+
+        if self.other.count() == 0 {
+            return Some(DiscoveryIssue::PermissionDenied { skipped });
+        }
+
+        self.other
+            .first_open_failed_issue(skipped)
+            .or(Some(DiscoveryIssue::NoDevicesFound))
+    }
 }
 
 #[derive(Debug)]
 struct DiscoveryStats {
     event_nodes: usize,
-    permission_denied: usize,
-    open_failed: usize,
-    read_dir_failed: usize,
-    sample_read_dir_error: Option<DiscoveryError>,
-    sample_open_error: Option<DiscoveryError>,
+    read_dir_failures: SampledFailures,
+    open_failures: OpenFailures,
 }
 
 impl DiscoveryStats {
     fn new() -> Self {
         Self {
             event_nodes: 0,
-            permission_denied: 0,
-            open_failed: 0,
-            read_dir_failed: 0,
-            sample_read_dir_error: None,
-            sample_open_error: None,
+            read_dir_failures: SampledFailures::default(),
+            open_failures: OpenFailures::default(),
         }
     }
 
@@ -44,26 +120,11 @@ impl DiscoveryStats {
     }
 
     fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        self.read_dir_failed += 1;
-        if self.sample_read_dir_error.is_none() {
-            self.sample_read_dir_error = Some(DiscoveryError::new(path, err));
-        }
+        self.read_dir_failures.record(path, err);
     }
 
     fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
-        if err.kind() == io::ErrorKind::PermissionDenied {
-            self.permission_denied += 1;
-            return;
-        }
-
-        self.open_failed += 1;
-        if self.sample_open_error.is_none() {
-            self.sample_open_error = Some(DiscoveryError::new(path, err));
-        }
-    }
-
-    fn total_open_failures(&self) -> usize {
-        self.permission_denied + self.open_failed
+        self.open_failures.record(path, err);
     }
 
     fn classify(&self, has_devices: bool) -> Option<DiscoveryIssue> {
@@ -72,41 +133,17 @@ impl DiscoveryStats {
         }
 
         if self.event_nodes == 0 {
-            return self.sample_read_dir_error.as_ref().map_or(
-                Some(DiscoveryIssue::NoDevicesFound),
-                |error| {
-                    Some(DiscoveryIssue::ReadDir {
-                        path: error.path.clone(),
-                        message: error.message.clone(),
-                    })
-                },
-            );
-        }
-
-        let skipped = self.total_open_failures();
-        if skipped == 0 {
             return self
-                .sample_read_dir_error
-                .as_ref()
-                .map(|error| DiscoveryIssue::ReadDir {
-                    path: error.path.clone(),
-                    message: error.message.clone(),
-                });
+                .read_dir_failures
+                .first_read_dir_issue()
+                .or(Some(DiscoveryIssue::NoDevicesFound));
         }
 
-        if self.open_failed == 0 {
-            return Some(DiscoveryIssue::PermissionDenied { skipped });
+        if let Some(issue) = self.open_failures.issue() {
+            return Some(issue);
         }
 
-        self.sample_open_error
-            .as_ref()
-            .map_or(Some(DiscoveryIssue::NoDevicesFound), |error| {
-                Some(DiscoveryIssue::OpenFailed {
-                    skipped,
-                    path: error.path.clone(),
-                    message: error.message.clone(),
-                })
-            })
+        self.read_dir_failures.first_read_dir_issue()
     }
 }
 
@@ -161,12 +198,12 @@ impl<T> DiscoveryResult<T> {
 
     #[cfg(test)]
     pub(crate) fn total_open_failures(&self) -> usize {
-        self.stats.total_open_failures()
+        self.stats.open_failures.total()
     }
 
     #[cfg(test)]
     pub(crate) fn read_dir_failures(&self) -> usize {
-        self.stats.read_dir_failed
+        self.stats.read_dir_failures.count()
     }
 }
 
@@ -222,6 +259,30 @@ mod tests {
         result.record_open_error(
             "/dev/input/event1",
             io::Error::new(io::ErrorKind::NotFound, "device disappeared"),
+        );
+
+        assert_eq!(
+            result.issue(),
+            Some(DiscoveryIssue::OpenFailed {
+                skipped: 2,
+                path: PathBuf::from("/dev/input/event1"),
+                message: "device disappeared".to_string(),
+            })
+        );
+    }
+
+    #[test]
+    fn discovery_issue_keeps_the_first_non_permission_open_failure_sample() {
+        let mut result: DiscoveryResult<()> = DiscoveryResult::new();
+        result.record_event_node();
+        result.record_event_node();
+        result.record_open_error(
+            "/dev/input/event1",
+            io::Error::new(io::ErrorKind::NotFound, "device disappeared"),
+        );
+        result.record_open_error(
+            "/dev/input/event2",
+            io::Error::new(io::ErrorKind::BrokenPipe, "broken pipe"),
         );
 
         assert_eq!(
