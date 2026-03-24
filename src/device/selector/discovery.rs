@@ -1,5 +1,6 @@
+mod issue;
+mod result;
 mod scan;
-mod types;
 
+pub(crate) use self::result::DiscoveryResult;
 pub(crate) use self::scan::discover_devices;
-pub(crate) use self::types::DiscoveryResult;

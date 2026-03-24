@@ -1,9 +1,9 @@
 use std::{io, path::PathBuf};
 
-use crate::error::Error;
+use super::issue::DiscoveryIssue;
 
 #[derive(Debug)]
-pub(crate) struct DiscoveryError {
+struct DiscoveryError {
     path: PathBuf,
     message: String,
 }
@@ -18,17 +18,17 @@ impl DiscoveryError {
 }
 
 #[derive(Debug)]
-pub(crate) struct DiscoveryStats {
-    pub(crate) event_nodes: usize,
-    pub(crate) permission_denied: usize,
-    pub(crate) open_failed: usize,
-    pub(crate) read_dir_failed: usize,
-    pub(crate) sample_read_dir_error: Option<DiscoveryError>,
-    pub(crate) sample_open_error: Option<DiscoveryError>,
+struct DiscoveryStats {
+    event_nodes: usize,
+    permission_denied: usize,
+    open_failed: usize,
+    read_dir_failed: usize,
+    sample_read_dir_error: Option<DiscoveryError>,
+    sample_open_error: Option<DiscoveryError>,
 }
 
 impl DiscoveryStats {
-    pub(crate) fn new() -> Self {
+    fn new() -> Self {
         Self {
             event_nodes: 0,
             permission_denied: 0,
@@ -39,14 +39,18 @@ impl DiscoveryStats {
         }
     }
 
-    pub(crate) fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+    fn record_event_node(&mut self) {
+        self.event_nodes += 1;
+    }
+
+    fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
         self.read_dir_failed += 1;
         if self.sample_read_dir_error.is_none() {
             self.sample_read_dir_error = Some(DiscoveryError::new(path, err));
         }
     }
 
-    pub(crate) fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+    fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
         if err.kind() == io::ErrorKind::PermissionDenied {
             self.permission_denied += 1;
             return;
@@ -58,11 +62,11 @@ impl DiscoveryStats {
         }
     }
 
-    pub(crate) fn total_open_failures(&self) -> usize {
+    fn total_open_failures(&self) -> usize {
         self.permission_denied + self.open_failed
     }
 
-    pub(crate) fn classify(&self, has_devices: bool) -> Option<DiscoveryIssue> {
+    fn classify(&self, has_devices: bool) -> Option<DiscoveryIssue> {
         if has_devices {
             return None;
         }
@@ -109,7 +113,7 @@ impl DiscoveryStats {
 #[derive(Debug)]
 pub(crate) struct DiscoveryResult<T> {
     pub(crate) devices: Vec<T>,
-    pub(crate) stats: DiscoveryStats,
+    stats: DiscoveryStats,
 }
 
 impl<T> DiscoveryResult<T> {
@@ -122,8 +126,24 @@ impl<T> DiscoveryResult<T> {
 
     pub(crate) fn read_dir_failed(path: impl Into<PathBuf>, err: io::Error) -> Self {
         let mut result = Self::new();
-        result.stats.record_read_dir_error(path, err);
+        result.record_read_dir_error(path, err);
         result
+    }
+
+    pub(crate) fn record_event_node(&mut self) {
+        self.stats.record_event_node();
+    }
+
+    pub(crate) fn record_read_dir_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+        self.stats.record_read_dir_error(path, err);
+    }
+
+    pub(crate) fn record_open_error(&mut self, path: impl Into<PathBuf>, err: io::Error) {
+        self.stats.record_open_error(path, err);
+    }
+
+    pub(crate) fn push_device(&mut self, device: T) {
+        self.devices.push(device);
     }
 
     pub(crate) fn issue(&self) -> Option<DiscoveryIssue> {
@@ -133,49 +153,20 @@ impl<T> DiscoveryResult<T> {
     pub(crate) fn error_message(&self) -> Option<String> {
         self.issue().map(|issue| issue.message())
     }
-}
 
-#[derive(Debug, PartialEq, Eq)]
-pub(crate) enum DiscoveryIssue {
-    ReadDir {
-        path: PathBuf,
-        message: String,
-    },
-    PermissionDenied {
-        skipped: usize,
-    },
-    OpenFailed {
-        skipped: usize,
-        path: PathBuf,
-        message: String,
-    },
-    NoDevicesFound,
-}
+    #[cfg(test)]
+    pub(crate) fn event_nodes(&self) -> usize {
+        self.stats.event_nodes
+    }
 
-impl DiscoveryIssue {
-    fn message(&self) -> String {
-        match self {
-            DiscoveryIssue::ReadDir { path, message } => {
-                format!("unable to read {}: {}", path.display(), message)
-            }
-            DiscoveryIssue::PermissionDenied { skipped } => {
-                format!(
-                    "found {skipped} input device node(s), but none were readable; check permissions for /dev/input/event*"
-                )
-            }
-            DiscoveryIssue::OpenFailed {
-                skipped,
-                path,
-                message,
-            } => {
-                format!(
-                    "found {skipped} input device node(s), but none could be opened; first error: {}: {}",
-                    path.display(),
-                    message
-                )
-            }
-            DiscoveryIssue::NoDevicesFound => Error::NoDevicesFound.to_string(),
-        }
+    #[cfg(test)]
+    pub(crate) fn total_open_failures(&self) -> usize {
+        self.stats.total_open_failures()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn read_dir_failures(&self) -> usize {
+        self.stats.read_dir_failed
     }
 }
 
@@ -195,12 +186,13 @@ mod tests {
     #[test]
     fn discovery_issue_reports_permission_guidance_when_all_devices_are_skipped() {
         let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 2;
-        result.stats.record_open_error(
+        result.record_event_node();
+        result.record_event_node();
+        result.record_open_error(
             "/dev/input/event0",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
-        result.stats.record_open_error(
+        result.record_open_error(
             "/dev/input/event1",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
@@ -221,12 +213,13 @@ mod tests {
     #[test]
     fn discovery_issue_reports_open_failures_when_causes_are_mixed() {
         let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 2;
-        result.stats.record_open_error(
+        result.record_event_node();
+        result.record_event_node();
+        result.record_open_error(
             "/dev/input/event0",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
-        result.stats.record_open_error(
+        result.record_open_error(
             "/dev/input/event1",
             io::Error::new(io::ErrorKind::NotFound, "device disappeared"),
         );
@@ -244,12 +237,12 @@ mod tests {
     #[test]
     fn discovery_issue_prefers_open_failures_over_partial_read_dir_errors() {
         let mut result: DiscoveryResult<()> = DiscoveryResult::new();
-        result.stats.event_nodes = 1;
-        result.stats.record_read_dir_error(
+        result.record_event_node();
+        result.record_read_dir_error(
             "/dev/input",
             io::Error::new(io::ErrorKind::Interrupted, "retry"),
         );
-        result.stats.record_open_error(
+        result.record_open_error(
             "/dev/input/event0",
             io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
         );
@@ -274,5 +267,19 @@ mod tests {
                 message: "read denied".to_string(),
             })
         );
+    }
+
+    #[test]
+    fn discovery_issue_is_suppressed_when_devices_are_found() {
+        let mut result = DiscoveryResult::new();
+        result.record_event_node();
+        result.record_open_error(
+            "/dev/input/event0",
+            io::Error::new(io::ErrorKind::PermissionDenied, "permission denied"),
+        );
+        result.push_device(());
+
+        assert_eq!(result.issue(), None);
+        assert_eq!(result.error_message(), None);
     }
 }

@@ -4,7 +4,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use super::types::DiscoveryResult;
+use super::result::DiscoveryResult;
 
 const INPUT_DIR: &str = "/dev/input";
 const INPUT_EVENT_PREFIX: &[u8] = b"event";
@@ -34,7 +34,7 @@ where
     for entry in entries {
         match entry {
             Ok(path) => scan_path(&path, &mut result, &mut open_device),
-            Err(err) => result.stats.record_read_dir_error(INPUT_DIR, err),
+            Err(err) => result.record_read_dir_error(INPUT_DIR, err),
         }
     }
 
@@ -49,10 +49,10 @@ where
         return;
     }
 
-    result.stats.event_nodes += 1;
+    result.record_event_node();
     match open_device(path) {
-        Ok(device) => result.devices.push(device),
-        Err(err) => result.stats.record_open_error(path, err),
+        Ok(device) => result.push_device(device),
+        Err(err) => result.record_open_error(path, err),
     }
 }
 
@@ -93,9 +93,9 @@ mod tests {
             Ok(path.display().to_string())
         });
 
-        assert_eq!(result.stats.event_nodes, 2);
-        assert_eq!(result.stats.total_open_failures(), 1);
-        assert_eq!(result.stats.read_dir_failed, 1);
+        assert_eq!(result.event_nodes(), 2);
+        assert_eq!(result.total_open_failures(), 1);
+        assert_eq!(result.read_dir_failures(), 1);
         assert_eq!(result.devices, vec!["/dev/input/event0".to_string()]);
     }
 }
