@@ -9,7 +9,7 @@ use crate::device::monitor::{
     model::{DeviceInput, InputSlice},
     ui,
 };
-use crate::device::text;
+use crate::ui::text;
 
 pub(crate) struct AxisRenderer;
 

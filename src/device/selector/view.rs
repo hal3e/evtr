@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use super::{commands::SelectorMode, state::SelectorState};
-use crate::device::{
+use crate::ui::{
     popup::{error_popup, help_popup, render_popup},
     theme, widgets,
 };

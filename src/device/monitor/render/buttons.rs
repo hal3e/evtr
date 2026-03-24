@@ -9,7 +9,7 @@ use ratatui::{
 };
 
 use crate::device::monitor::model::{DeviceInput, InputKind, InputSlice};
-use crate::device::text;
+use crate::ui::text;
 
 use self::layout::{ButtonLayout, GridMetrics};
 use crate::device::monitor::config;

@@ -1,9 +1,5 @@
 mod monitor;
-mod popup;
 mod selector;
-mod text;
-mod theme;
-mod widgets;
 
 use std::mem;
 

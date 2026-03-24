@@ -1,7 +1,7 @@
 use evdev::AbsoluteAxisCode;
 use ratatui::layout::Rect;
 
-use crate::device::widgets;
+use crate::ui::widgets;
 
 use super::Counts;
 use crate::device::monitor::{

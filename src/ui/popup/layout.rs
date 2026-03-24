@@ -1,7 +1,7 @@
 use ratatui::layout::Rect;
 
 use super::Popup;
-use crate::device::text;
+use crate::ui::text;
 
 pub(super) fn popup_area<S: AsRef<str>>(
     area: Rect,
@@ -55,7 +55,7 @@ mod tests {
     };
 
     use super::{popup_area, popup_height, popup_width};
-    use crate::device::popup::Popup;
+    use crate::ui::popup::Popup;
 
     fn popup() -> Popup<'static> {
         Popup::new("Info")

@@ -1,7 +1,7 @@
 use ratatui::{layout::Alignment, widgets::Wrap};
 
 use super::Popup;
-use crate::device::theme;
+use crate::ui::theme;
 
 pub(crate) fn help_popup(
     title: &str,

@@ -4,7 +4,7 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use crate::device::{
+use crate::ui::{
     popup::{help_popup, info_popup, render_popup},
     widgets,
 };

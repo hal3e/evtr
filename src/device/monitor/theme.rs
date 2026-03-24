@@ -1,6 +1,6 @@
 use ratatui::style::{Color, Style};
 
-use crate::device::theme;
+use crate::ui::theme;
 
 pub fn style_label() -> Style {
     theme::style_text()
