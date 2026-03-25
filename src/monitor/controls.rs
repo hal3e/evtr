@@ -20,7 +20,7 @@ const FOCUS_NEXT_KEY: char = 'J';
 const FOCUS_PREV_KEY: char = 'K';
 
 #[derive(Copy, Clone, Debug, PartialEq, Eq)]
-pub(crate) enum Command {
+pub(super) enum Command {
     BackToSelector,
     ExitApp,
     Reset,
@@ -36,7 +36,7 @@ pub(crate) enum Command {
     None,
 }
 
-pub(crate) fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
+pub(super) fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
     match popup {
         ActivePopup::Info => match key_event.code {
             KeyCode::Esc | KeyCode::Char(INFO_KEY) => Command::ToggleInfo,
@@ -74,7 +74,7 @@ pub(crate) fn command_for(key_event: KeyEvent, popup: ActivePopup) -> Command {
     }
 }
 
-pub(crate) fn help_lines() -> Vec<String> {
+pub(super) fn help_lines() -> Vec<String> {
     vec![
         format!("Scroll: Up/Down or {SCROLL_UP_KEY}/{SCROLL_DOWN_KEY}, PageUp/PageDown"),
         format!("Jump: Home/End or {HOME_KEY}/{END_KEY}"),
@@ -96,7 +96,7 @@ fn ctrl_key(key: char) -> String {
     format!("Ctrl-{}", key.to_ascii_uppercase())
 }
 
-pub(crate) fn apply_command(
+pub(super) fn apply_command(
     command: Command,
     state: &mut MonitorState,
     inputs: &mut InputCollection,

@@ -26,7 +26,7 @@ const POPUP_MAX_WIDTH: u16 = 80;
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
-pub(crate) fn render_selector(
+pub(super) fn render_selector(
     state: &SelectorState,
     devices: &DeviceCatalog,
     area: Rect,

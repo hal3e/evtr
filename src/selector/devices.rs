@@ -2,13 +2,13 @@ use std::path::Path;
 
 use super::{DeviceInfo, discovery::DiscoveryResult};
 
-pub(crate) struct DeviceCatalog {
+pub(super) struct DeviceCatalog {
     devices: Vec<DeviceInfo>,
     labels: Vec<String>,
 }
 
 impl DeviceCatalog {
-    pub(crate) fn from_discovery(discovery: DiscoveryResult<DeviceInfo>) -> (Self, Option<String>) {
+    pub(super) fn from_discovery(discovery: DiscoveryResult<DeviceInfo>) -> (Self, Option<String>) {
         let error_message = discovery.error_message();
         let devices = discovery.devices;
         let labels = devices.iter().map(device_label).collect();
@@ -16,15 +16,15 @@ impl DeviceCatalog {
         (Self { devices, labels }, error_message)
     }
 
-    pub(crate) fn labels(&self) -> &[String] {
+    pub(super) fn labels(&self) -> &[String] {
         &self.labels
     }
 
-    pub(crate) fn label(&self, index: usize) -> Option<&str> {
+    pub(super) fn label(&self, index: usize) -> Option<&str> {
         self.labels.get(index).map(String::as_str)
     }
 
-    pub(crate) fn take_selected(&mut self, index: Option<usize>) -> Option<DeviceInfo> {
+    pub(super) fn take_selected(&mut self, index: Option<usize>) -> Option<DeviceInfo> {
         let index = index?;
         if index >= self.devices.len() {
             return None;

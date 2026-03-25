@@ -10,7 +10,7 @@ use self::{
     types::{TouchMode, TouchRange, TouchSlot},
 };
 
-pub(crate) struct TouchState {
+pub(super) struct TouchState {
     mode: TouchMode,
     current_slot: usize,
     slots: Vec<TouchSlot>,
@@ -20,7 +20,7 @@ pub(crate) struct TouchState {
 }
 
 impl TouchState {
-    pub(crate) fn from_device(device: &Device) -> Bootstrapped<Self> {
+    pub(super) fn from_device(device: &Device) -> Bootstrapped<Self> {
         let Some(bootstrap) = inspect_touch_device(device) else {
             return Bootstrapped::new(Self::disabled());
         };
@@ -65,23 +65,23 @@ impl TouchState {
         }
     }
 
-    pub(crate) fn enabled(&self) -> bool {
+    pub(super) fn enabled(&self) -> bool {
         self.x_range.is_known() && self.y_range.is_known()
     }
 
-    pub(crate) fn is_touch_device(&self) -> bool {
+    pub(super) fn is_touch_device(&self) -> bool {
         !matches!(self.mode, TouchMode::None)
     }
 
-    pub(crate) fn x_range(&self) -> Option<(i32, i32)> {
+    pub(super) fn x_range(&self) -> Option<(i32, i32)> {
         self.x_range.range()
     }
 
-    pub(crate) fn y_range(&self) -> Option<(i32, i32)> {
+    pub(super) fn y_range(&self) -> Option<(i32, i32)> {
         self.y_range.range()
     }
 
-    pub(crate) fn ranges(&self) -> Option<((i32, i32), (i32, i32))> {
+    pub(super) fn ranges(&self) -> Option<((i32, i32), (i32, i32))> {
         Some((self.x_range()?, self.y_range()?))
     }
 }

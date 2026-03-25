@@ -37,7 +37,7 @@ pub(crate) enum MonitorExit {
     ExitApp,
 }
 
-pub struct DeviceMonitor {
+pub(crate) struct DeviceMonitor {
     device_stream: evdev::EventStream,
     inputs: InputCollection,
     identifier: String,
@@ -67,7 +67,7 @@ impl DeviceMonitor {
         })
     }
 
-    pub async fn run(
+    pub(crate) async fn run(
         terminal: &mut DefaultTerminal,
         device_info: DeviceInfo,
     ) -> Result<MonitorExit> {

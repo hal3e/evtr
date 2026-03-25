@@ -8,20 +8,20 @@ use crate::{
     selector::{DeviceInfo, DeviceSelector},
 };
 
-pub struct Evtr {
+pub(crate) struct Evtr {
     terminal: DefaultTerminal,
     state: State,
 }
 
 impl Evtr {
-    pub fn new() -> Result<Self> {
+    pub(crate) fn new() -> Result<Self> {
         Ok(Self {
             terminal: ratatui::try_init().map_err(|err| ErrorArea::App.io("init terminal", err))?,
             state: State::new(),
         })
     }
 
-    pub async fn run(mut self) -> Result<()> {
+    pub(crate) async fn run(mut self) -> Result<()> {
         loop {
             self.state = match self.state.take() {
                 State::Exit => break,

@@ -16,22 +16,22 @@ use self::{
 };
 
 #[derive(Clone, Copy)]
-pub(crate) struct Counts {
+pub(super) struct Counts {
     abs: usize,
     rel: usize,
     btn: usize,
 }
 
 impl Counts {
-    pub(crate) fn new(abs: usize, rel: usize, btn: usize) -> Self {
+    pub(super) fn new(abs: usize, rel: usize, btn: usize) -> Self {
         Self { abs, rel, btn }
     }
 
-    pub(crate) fn total_axes(&self) -> usize {
+    pub(super) fn total_axes(&self) -> usize {
         self.abs + self.rel
     }
 
-    pub(crate) fn has_buttons(&self) -> bool {
+    pub(super) fn has_buttons(&self) -> bool {
         self.btn > 0
     }
 
@@ -44,17 +44,17 @@ impl Counts {
     }
 }
 
-pub(crate) struct RenderPlan {
-    pub(crate) focus: Focus,
-    pub(crate) scroll: ScrollState,
-    pub(crate) effective_counts: Counts,
-    pub(crate) scroll_bounds: ScrollBounds,
-    pub(crate) boxes: PlannedBoxes,
-    pub(crate) areas: PlannedAreas,
+pub(super) struct RenderPlan {
+    pub(super) focus: Focus,
+    pub(super) scroll: ScrollState,
+    pub(super) effective_counts: Counts,
+    pub(super) scroll_bounds: ScrollBounds,
+    pub(super) boxes: PlannedBoxes,
+    pub(super) areas: PlannedAreas,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) struct NavigationContext {
+pub(super) struct NavigationContext {
     focus: Focus,
     scroll: ScrollState,
     scroll_bounds: ScrollBounds,
@@ -62,29 +62,29 @@ pub(crate) struct NavigationContext {
 }
 
 impl NavigationContext {
-    pub(crate) fn focus(self) -> Focus {
+    pub(super) fn focus(self) -> Focus {
         self.focus
     }
 
-    pub(crate) fn scroll(self) -> ScrollState {
+    pub(super) fn scroll(self) -> ScrollState {
         self.scroll
     }
 
-    pub(crate) fn scroll_bounds(self) -> ScrollBounds {
+    pub(super) fn scroll_bounds(self) -> ScrollBounds {
         self.scroll_bounds
     }
 
-    pub(crate) fn focusable(self) -> bool {
+    pub(super) fn focusable(self) -> bool {
         self.focusable
     }
 }
 
 impl RenderPlan {
-    pub(crate) fn focusable(&self) -> bool {
+    pub(super) fn focusable(&self) -> bool {
         self.boxes.axes.is_some() && self.boxes.buttons.is_some()
     }
 
-    pub(crate) fn navigation_context(&self) -> NavigationContext {
+    pub(super) fn navigation_context(&self) -> NavigationContext {
         NavigationContext {
             focus: self.focus,
             scroll: self.scroll,
@@ -93,13 +93,13 @@ impl RenderPlan {
         }
     }
 
-    pub(crate) fn axis_offsets(&self) -> (usize, usize) {
+    pub(super) fn axis_offsets(&self) -> (usize, usize) {
         self.scroll_bounds
             .axis_offsets(self.effective_counts, self.scroll.axis)
     }
 }
 
-pub(crate) fn build_render_plan(
+pub(super) fn build_render_plan(
     area: Rect,
     state: &MonitorState,
     view_model: &MonitorViewModel,

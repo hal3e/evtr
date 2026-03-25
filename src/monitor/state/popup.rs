@@ -3,27 +3,27 @@ use crate::monitor::plan::NavigationContext;
 use super::{ActivePopup, Focus, MonitorState};
 
 impl MonitorState {
-    pub(crate) fn active_popup(&self) -> ActivePopup {
+    pub(in crate::monitor) fn active_popup(&self) -> ActivePopup {
         self.active_popup
     }
 
-    pub(crate) fn focus(&self) -> Focus {
+    pub(in crate::monitor) fn focus(&self) -> Focus {
         self.focus
     }
 
-    pub(crate) fn focus_next(&mut self, navigation: NavigationContext) {
+    pub(in crate::monitor) fn focus_next(&mut self, navigation: NavigationContext) {
         self.focus = next_focus(navigation.focus(), navigation.focusable());
     }
 
-    pub(crate) fn focus_prev(&mut self, navigation: NavigationContext) {
+    pub(in crate::monitor) fn focus_prev(&mut self, navigation: NavigationContext) {
         self.focus_next(navigation);
     }
 
-    pub(crate) fn toggle_info(&mut self) {
+    pub(in crate::monitor) fn toggle_info(&mut self) {
         self.active_popup = toggled_popup(self.active_popup, ActivePopup::Info);
     }
 
-    pub(crate) fn toggle_help(&mut self) {
+    pub(in crate::monitor) fn toggle_help(&mut self) {
         self.active_popup = toggled_popup(self.active_popup, ActivePopup::Help);
     }
 }

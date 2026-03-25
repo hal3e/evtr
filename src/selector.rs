@@ -29,13 +29,13 @@ use crate::{
 pub(crate) use self::devices::device_label;
 
 #[derive(Debug)]
-pub struct DeviceInfo {
-    pub device: Device,
-    pub name: String,
-    pub path: PathBuf,
+pub(crate) struct DeviceInfo {
+    pub(crate) device: Device,
+    pub(crate) name: String,
+    pub(crate) path: PathBuf,
 }
 
-pub struct DeviceSelector {
+pub(crate) struct DeviceSelector {
     devices: DeviceCatalog,
     state: SelectorState,
 }
@@ -71,7 +71,7 @@ impl DeviceSelector {
         self.devices = devices;
     }
 
-    pub async fn run(
+    pub(crate) async fn run(
         terminal: &mut DefaultTerminal,
         error_message: Option<String>,
     ) -> Result<State> {

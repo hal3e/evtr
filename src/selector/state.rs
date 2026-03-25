@@ -4,21 +4,21 @@ use self::filter::FilterState;
 use super::commands::{SelectorCommand, SelectorMode};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectorTransition {
+pub(super) enum SelectorTransition {
     Stay,
     Exit,
     RefreshDevices,
     OpenSelection,
 }
 
-pub(crate) struct SelectorState {
+pub(super) struct SelectorState {
     filter: FilterState,
     error_message: Option<String>,
     mode: SelectorMode,
 }
 
 impl SelectorState {
-    pub(crate) fn new(identifiers: &[String], error_message: Option<String>) -> Self {
+    pub(super) fn new(identifiers: &[String], error_message: Option<String>) -> Self {
         Self {
             filter: FilterState::new(identifiers.len()),
             error_message,
@@ -26,7 +26,7 @@ impl SelectorState {
         }
     }
 
-    pub(crate) fn apply_discovery(
+    pub(super) fn apply_discovery(
         &mut self,
         identifiers: &[String],
         error_message: Option<String>,
@@ -35,11 +35,11 @@ impl SelectorState {
         self.error_message = error_message;
     }
 
-    pub(crate) fn mode(&self) -> SelectorMode {
+    pub(super) fn mode(&self) -> SelectorMode {
         self.mode
     }
 
-    pub(crate) fn reduce(
+    pub(super) fn reduce(
         &mut self,
         command: SelectorCommand,
         identifiers: &[String],
@@ -97,23 +97,23 @@ impl SelectorState {
         }
     }
 
-    pub(crate) fn search_query(&self) -> &str {
+    pub(super) fn search_query(&self) -> &str {
         self.filter.search_query()
     }
 
-    pub(crate) fn filtered_indexes(&self) -> &[usize] {
+    pub(super) fn filtered_indexes(&self) -> &[usize] {
         self.filter.indexes()
     }
 
-    pub(crate) fn selected_filtered_index(&self) -> usize {
+    pub(super) fn selected_filtered_index(&self) -> usize {
         self.filter.selected_index()
     }
 
-    pub(crate) fn selected_device_index(&self) -> Option<usize> {
+    pub(super) fn selected_device_index(&self) -> Option<usize> {
         self.filter.selected_item_index()
     }
 
-    pub(crate) fn error_message(&self) -> Option<&str> {
+    pub(super) fn error_message(&self) -> Option<&str> {
         self.error_message.as_deref()
     }
 

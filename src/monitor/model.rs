@@ -5,7 +5,7 @@ mod types;
 
 use evdev::{AbsoluteAxisCode, Device, InputEvent};
 
-pub(crate) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
+pub(super) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
 use self::{
     super::bootstrap::Bootstrapped,
     bootstrap::collect_device_inputs,
@@ -13,13 +13,13 @@ use self::{
     index::EventIndex,
 };
 
-pub(crate) struct InputCollection {
+pub(super) struct InputCollection {
     buckets: InputBuckets,
     event_index: EventIndex,
 }
 
 impl InputCollection {
-    pub(crate) fn from_device(device: &Device) -> Bootstrapped<Self> {
+    pub(super) fn from_device(device: &Device) -> Bootstrapped<Self> {
         let entries = collect_device_inputs(device);
 
         Bootstrapped::with_warnings(
@@ -28,7 +28,7 @@ impl InputCollection {
         )
     }
 
-    pub(crate) fn handle_event(&mut self, event: &InputEvent) {
+    pub(super) fn handle_event(&mut self, event: &InputEvent) {
         if let Some(id) = InputId::from_event(event)
             && let Some(location) = self.event_index.location_for(id)
             && let Some(input) = self.buckets.input_mut(location)
@@ -37,16 +37,16 @@ impl InputCollection {
         }
     }
 
-    pub(crate) fn reset_relative_axes(&mut self) {
+    pub(super) fn reset_relative_axes(&mut self) {
         self.buckets.reset_relative_axes();
     }
 
-    pub(crate) fn absolute_axis(&self, code: AbsoluteAxisCode) -> Option<AbsoluteAxis> {
+    pub(super) fn absolute_axis(&self, code: AbsoluteAxisCode) -> Option<AbsoluteAxis> {
         let location = self.event_index.location_for(InputId::absolute(code.0))?;
         self.buckets.absolute_axis(location)
     }
 
-    pub(crate) fn absolute_axis_pair(
+    pub(super) fn absolute_axis_pair(
         &self,
         x: AbsoluteAxisCode,
         y: AbsoluteAxisCode,
@@ -54,15 +54,15 @@ impl InputCollection {
         Some((self.absolute_axis(x)?, self.absolute_axis(y)?))
     }
 
-    pub(crate) fn absolute_inputs(&self) -> InputSlice<'_> {
+    pub(super) fn absolute_inputs(&self) -> InputSlice<'_> {
         self.buckets.absolute_inputs()
     }
 
-    pub(crate) fn relative_inputs(&self) -> InputSlice<'_> {
+    pub(super) fn relative_inputs(&self) -> InputSlice<'_> {
         self.buckets.relative_inputs()
     }
 
-    pub(crate) fn button_inputs(&self) -> InputSlice<'_> {
+    pub(super) fn button_inputs(&self) -> InputSlice<'_> {
         self.buckets.button_inputs()
     }
 

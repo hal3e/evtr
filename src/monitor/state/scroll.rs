@@ -95,20 +95,20 @@ impl ScrollLimits {
 }
 
 impl MonitorState {
-    pub(crate) fn axis_scroll(&self) -> usize {
+    pub(in crate::monitor) fn axis_scroll(&self) -> usize {
         self.axis_scroll
     }
 
-    pub(crate) fn button_row_scroll(&self) -> usize {
+    pub(in crate::monitor) fn button_row_scroll(&self) -> usize {
         self.button_row_scroll
     }
 
-    pub(crate) fn sync_from_navigation(&mut self, navigation: NavigationContext) {
+    pub(in crate::monitor) fn sync_from_navigation(&mut self, navigation: NavigationContext) {
         self.focus = navigation.focus();
         ScrollCursor::from_navigation(navigation).apply(self);
     }
 
-    pub(crate) fn scroll_by(&mut self, direction: i32, navigation: NavigationContext) {
+    pub(in crate::monitor) fn scroll_by(&mut self, direction: i32, navigation: NavigationContext) {
         let cursor = ScrollCursor::from_state(self).step(
             navigation.focus(),
             direction,
@@ -117,7 +117,7 @@ impl MonitorState {
         cursor.apply(self);
     }
 
-    pub(crate) fn scroll_page(
+    pub(in crate::monitor) fn scroll_page(
         &mut self,
         direction: i32,
         navigation: NavigationContext,
@@ -135,13 +135,13 @@ impl MonitorState {
         cursor.apply(self);
     }
 
-    pub(crate) fn scroll_home(&mut self, navigation: NavigationContext) {
+    pub(in crate::monitor) fn scroll_home(&mut self, navigation: NavigationContext) {
         ScrollCursor::from_state(self)
             .home(navigation.focus())
             .apply(self);
     }
 
-    pub(crate) fn scroll_end(&mut self, navigation: NavigationContext) {
+    pub(in crate::monitor) fn scroll_end(&mut self, navigation: NavigationContext) {
         ScrollCursor::from_state(self)
             .end(
                 navigation.focus(),

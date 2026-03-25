@@ -8,19 +8,19 @@ use crate::monitor::{
 };
 
 #[derive(Clone, Copy)]
-pub(crate) struct StickState {
-    pub(crate) x: AbsoluteAxis,
-    pub(crate) y: AbsoluteAxis,
+pub(super) struct StickState {
+    pub(super) x: AbsoluteAxis,
+    pub(super) y: AbsoluteAxis,
 }
 
 #[derive(Default)]
-pub(crate) struct JoystickState {
-    pub(crate) left: Option<StickState>,
-    pub(crate) right: Option<StickState>,
+pub(super) struct JoystickState {
+    pub(super) left: Option<StickState>,
+    pub(super) right: Option<StickState>,
 }
 
 impl JoystickState {
-    pub(crate) fn from_axes(
+    pub(super) fn from_axes(
         left: Option<(AbsoluteAxis, AbsoluteAxis)>,
         right: Option<(AbsoluteAxis, AbsoluteAxis)>,
     ) -> Self {
@@ -30,19 +30,19 @@ impl JoystickState {
         }
     }
 
-    pub(crate) fn count(&self) -> usize {
+    pub(super) fn count(&self) -> usize {
         self.left.is_some() as usize + self.right.is_some() as usize
     }
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct HatState {
-    pub(crate) x: i32,
-    pub(crate) y: i32,
+pub(super) struct HatState {
+    pub(super) x: i32,
+    pub(super) y: i32,
 }
 
 impl HatState {
-    pub(crate) fn from_axes(x: AbsoluteAxis, y: AbsoluteAxis, invert_y: bool) -> Self {
+    pub(super) fn from_axes(x: AbsoluteAxis, y: AbsoluteAxis, invert_y: bool) -> Self {
         let y = if invert_y {
             -sign(y.value)
         } else {
@@ -56,7 +56,7 @@ impl HatState {
     }
 }
 
-pub(crate) struct MonitorViewModel {
+pub(super) struct MonitorViewModel {
     joystick: JoystickState,
     hat_state: Option<HatState>,
     axes_available: bool,
@@ -65,7 +65,7 @@ pub(crate) struct MonitorViewModel {
 }
 
 impl MonitorViewModel {
-    pub(crate) fn from_inputs(
+    pub(super) fn from_inputs(
         counts: Counts,
         inputs: &InputCollection,
         touch: &TouchState,
@@ -96,39 +96,39 @@ impl MonitorViewModel {
         }
     }
 
-    pub(crate) fn joystick(&self) -> &JoystickState {
+    pub(super) fn joystick(&self) -> &JoystickState {
         &self.joystick
     }
 
-    pub(crate) fn hat_state(&self) -> Option<HatState> {
+    pub(super) fn hat_state(&self) -> Option<HatState> {
         self.hat_state
     }
 
-    pub(crate) fn joystick_count(&self) -> usize {
+    pub(super) fn joystick_count(&self) -> usize {
         self.joystick.count()
     }
 
-    pub(crate) fn joystick_present(&self) -> bool {
+    pub(super) fn joystick_present(&self) -> bool {
         self.joystick_count() > 0
     }
 
-    pub(crate) fn hat_present(&self) -> bool {
+    pub(super) fn hat_present(&self) -> bool {
         self.hat_state.is_some()
     }
 
-    pub(crate) fn axes_available(&self) -> bool {
+    pub(super) fn axes_available(&self) -> bool {
         self.axes_available
     }
 
-    pub(crate) fn touch_enabled(&self) -> bool {
+    pub(super) fn touch_enabled(&self) -> bool {
         self.touch_enabled
     }
 
-    pub(crate) fn buttons_available(&self) -> bool {
+    pub(super) fn buttons_available(&self) -> bool {
         self.buttons_available
     }
 
-    pub(crate) fn main_min_width(&self) -> u16 {
+    pub(super) fn main_min_width(&self) -> u16 {
         let mut width = config::MAIN_COLUMN_MIN_WIDTH;
         if self.axes_available {
             width = width.max(config::AXIS_MIN_WIDTH);

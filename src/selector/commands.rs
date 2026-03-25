@@ -8,19 +8,19 @@ const CLEAR_SEARCH_KEY: char = 'u';
 const REFRESH_KEY: char = 'r';
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectorMode {
+pub(super) enum SelectorMode {
     Browsing,
     Help,
 }
 
 impl SelectorMode {
-    pub(crate) fn is_browsing(self) -> bool {
+    pub(super) fn is_browsing(self) -> bool {
         matches!(self, Self::Browsing)
     }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum SelectorCommand {
+pub(super) enum SelectorCommand {
     Exit,
     Back,
     ToggleHelp,
@@ -38,7 +38,7 @@ pub(crate) enum SelectorCommand {
     None,
 }
 
-pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
+pub(super) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
     match mode {
         SelectorMode::Help => match key.code {
             KeyCode::Esc | KeyCode::Char(HELP_KEY) => SelectorCommand::ToggleHelp,
@@ -83,7 +83,7 @@ pub(crate) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand 
     }
 }
 
-pub(crate) fn help_lines() -> Vec<String> {
+pub(super) fn help_lines() -> Vec<String> {
     vec![
         format!(
             "Move: Up/Down, {}, {}, PageUp/PageDown, Home/End",
