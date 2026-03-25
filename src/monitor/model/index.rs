@@ -28,3 +28,39 @@ impl EventIndex {
         self.by_event.get(&id).copied()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{EventIndex, InputLocation};
+    use crate::monitor::model::InputId;
+
+    #[test]
+    fn location_for_returns_inserted_location() {
+        let mut index = EventIndex::new();
+        index.insert(InputId::absolute(4), InputLocation::Absolute(2));
+
+        assert_eq!(
+            index.location_for(InputId::absolute(4)),
+            Some(InputLocation::Absolute(2))
+        );
+    }
+
+    #[test]
+    fn location_for_returns_none_for_unknown_input_id() {
+        let index = EventIndex::new();
+
+        assert_eq!(index.location_for(InputId::relative(1)), None);
+    }
+
+    #[test]
+    fn insert_overwrites_existing_location_for_same_input_id() {
+        let mut index = EventIndex::new();
+        index.insert(InputId::key(7), InputLocation::Button(0));
+        index.insert(InputId::key(7), InputLocation::Button(3));
+
+        assert_eq!(
+            index.location_for(InputId::key(7)),
+            Some(InputLocation::Button(3))
+        );
+    }
+}

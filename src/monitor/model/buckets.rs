@@ -127,3 +127,180 @@ fn sorted_inputs(
         })
         .collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{InputBuckets, InputEntries, sorted_inputs};
+    use crate::monitor::model::{
+        AbsoluteState, DeviceInput, InputId, InputKind,
+        index::{EventIndex, InputLocation},
+    };
+
+    fn absolute_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Absolute(AbsoluteState::kernel(-10, 10, value)),
+        }
+    }
+
+    fn relative_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Relative(value),
+        }
+    }
+
+    fn button_input(name: &str, pressed: bool) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Button(pressed),
+        }
+    }
+
+    fn buckets() -> InputBuckets {
+        InputBuckets {
+            absolute: vec![absolute_input("abs_x", 4)],
+            relative: vec![relative_input("rel_x", 3)],
+            buttons: vec![button_input("south", true)],
+        }
+    }
+
+    #[test]
+    fn into_buckets_and_index_sorts_inputs_and_records_locations() {
+        let entries = InputEntries::new(
+            vec![
+                (4, absolute_input("abs_z", 0)),
+                (1, absolute_input("abs_x", 1)),
+            ],
+            vec![
+                (3, relative_input("rel_y", 0)),
+                (2, relative_input("rel_x", 2)),
+            ],
+            vec![
+                (9, button_input("east", false)),
+                (1, button_input("south", true)),
+            ],
+        );
+
+        let (buckets, index) = entries.into_buckets_and_index();
+
+        assert_eq!(buckets.absolute[0].name, "abs_x");
+        assert_eq!(buckets.absolute[1].name, "abs_z");
+        assert_eq!(buckets.relative[0].name, "rel_x");
+        assert_eq!(buckets.buttons[0].name, "south");
+        assert_eq!(
+            index.location_for(InputId::absolute(1)),
+            Some(InputLocation::Absolute(0))
+        );
+        assert_eq!(
+            index.location_for(InputId::relative(3)),
+            Some(InputLocation::Relative(1))
+        );
+        assert_eq!(
+            index.location_for(InputId::key(9)),
+            Some(InputLocation::Button(1))
+        );
+    }
+
+    #[test]
+    fn input_and_input_mut_use_the_requested_bucket_location() {
+        let mut buckets = buckets();
+
+        assert_eq!(
+            buckets
+                .input(InputLocation::Absolute(0))
+                .map(|input| input.name.as_str()),
+            Some("abs_x")
+        );
+        assert_eq!(
+            buckets
+                .input(InputLocation::Relative(0))
+                .map(|input| input.name.as_str()),
+            Some("rel_x")
+        );
+        assert_eq!(
+            buckets
+                .input(InputLocation::Button(0))
+                .map(|input| input.name.as_str()),
+            Some("south")
+        );
+        assert!(buckets.input(InputLocation::Button(1)).is_none());
+
+        if let Some(input) = buckets.input_mut(InputLocation::Relative(0)) {
+            input.name = "rel_dx".to_string();
+        }
+
+        assert_eq!(
+            buckets
+                .input(InputLocation::Relative(0))
+                .map(|input| input.name.as_str()),
+            Some("rel_dx")
+        );
+    }
+
+    #[test]
+    fn absolute_axis_returns_none_for_non_absolute_locations() {
+        let buckets = buckets();
+
+        assert_eq!(
+            buckets.absolute_axis(InputLocation::Absolute(0)),
+            Some(crate::monitor::model::AbsoluteAxis {
+                min: -10,
+                max: 10,
+                value: 4,
+            })
+        );
+        assert_eq!(buckets.absolute_axis(InputLocation::Relative(0)), None);
+        assert_eq!(buckets.absolute_axis(InputLocation::Button(0)), None);
+    }
+
+    #[test]
+    fn reset_relative_axes_only_clears_relative_bucket_values() {
+        let mut buckets = buckets();
+
+        buckets.reset_relative_axes();
+
+        assert_eq!(buckets.relative[0].input_type, InputKind::Relative(0));
+        assert_eq!(
+            buckets.absolute[0].input_type,
+            InputKind::Absolute(AbsoluteState::kernel(-10, 10, 4))
+        );
+        assert_eq!(buckets.buttons[0].input_type, InputKind::Button(true));
+    }
+
+    #[test]
+    fn sorted_inputs_returns_grouped_order_and_populates_the_event_index() {
+        let mut index = EventIndex::new();
+
+        let inputs = sorted_inputs(
+            vec![
+                (5, relative_input("rel_z", 0)),
+                (1, relative_input("rel_x", 0)),
+                (3, relative_input("rel_y", 0)),
+            ],
+            InputId::relative,
+            InputLocation::Relative,
+            &mut index,
+        );
+
+        assert_eq!(
+            inputs
+                .iter()
+                .map(|input| input.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["rel_x", "rel_y", "rel_z"]
+        );
+        assert_eq!(
+            index.location_for(InputId::relative(1)),
+            Some(InputLocation::Relative(0))
+        );
+        assert_eq!(
+            index.location_for(InputId::relative(3)),
+            Some(InputLocation::Relative(1))
+        );
+        assert_eq!(
+            index.location_for(InputId::relative(5)),
+            Some(InputLocation::Relative(2))
+        );
+    }
+}

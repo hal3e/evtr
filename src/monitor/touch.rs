@@ -112,3 +112,100 @@ fn initialize_slots(slots: &mut [TouchSlot], mode: TouchMode) {
         slots[0].tracking_id = Some(0);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use evdev::KeyCode;
+
+    use super::{
+        TouchState, initialize_slots,
+        types::{MultiTouchSlots, TouchMode, TouchRange, TouchSlot},
+    };
+
+    #[test]
+    fn disabled_state_is_not_enabled_or_touch_capable() {
+        let state = TouchState::disabled();
+
+        assert!(!state.enabled());
+        assert!(!state.is_touch_device());
+        assert_eq!(state.ranges(), None);
+        assert!(state.slots.is_empty());
+    }
+
+    #[test]
+    fn ranges_require_both_axes_to_be_known() {
+        let state = TouchState::from_parts(
+            TouchMode::SingleTouch { contact_key: None },
+            None,
+            TouchRange::fixed(0, 100),
+            TouchRange::Unknown,
+        );
+
+        assert_eq!(state.x_range(), Some((0, 100)));
+        assert_eq!(state.y_range(), None);
+        assert_eq!(state.ranges(), None);
+        assert!(!state.enabled());
+        assert!(state.is_touch_device());
+    }
+
+    #[test]
+    fn single_touch_without_contact_key_seeds_primary_tracking() {
+        let state = TouchState::from_parts(
+            TouchMode::SingleTouch { contact_key: None },
+            None,
+            TouchRange::fixed(0, 100),
+            TouchRange::fixed(0, 100),
+        );
+
+        assert_eq!(state.slots.len(), 1);
+        assert_eq!(state.slots[0].tracking_id, Some(0));
+        assert_eq!(state.slot_limit, Some(1));
+    }
+
+    #[test]
+    fn explicit_multi_touch_uses_the_detected_slot_limit() {
+        let state = TouchState::from_parts(
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            },
+            Some(3),
+            TouchRange::fixed(0, 100),
+            TouchRange::fixed(0, 100),
+        );
+
+        assert_eq!(state.slots.len(), 3);
+        assert_eq!(state.slot_limit, Some(3));
+        assert!(state.slots.iter().all(|slot| slot.tracking_id.is_none()));
+    }
+
+    #[test]
+    fn implicit_multi_touch_initializes_a_single_slot() {
+        let state = TouchState::from_parts(
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::ImplicitSingle,
+            },
+            Some(4),
+            TouchRange::fixed(0, 100),
+            TouchRange::fixed(0, 100),
+        );
+
+        assert_eq!(state.slots.len(), 1);
+        assert_eq!(state.slot_limit, Some(1));
+    }
+
+    #[test]
+    fn initialize_slots_only_seeds_tracking_for_contactless_single_touch() {
+        let mut slots = vec![TouchSlot::default()];
+        initialize_slots(&mut slots, TouchMode::SingleTouch { contact_key: None });
+        assert_eq!(slots[0].tracking_id, Some(0));
+
+        let mut slots = vec![TouchSlot::default()];
+        initialize_slots(
+            &mut slots,
+            TouchMode::SingleTouch {
+                contact_key: Some(KeyCode::BTN_TOUCH),
+            },
+        );
+        assert_eq!(slots[0].tracking_id, None);
+    }
+}
