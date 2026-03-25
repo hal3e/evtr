@@ -3,7 +3,7 @@ use ratatui::layout::Rect;
 use crate::monitor::config;
 
 use super::{
-    BoxMinimums,
+    BoxMinimums, HatPanel, JoystickPanel,
     split::{gap_if_room, ratio_widths, split_row_ratio},
 };
 
@@ -17,12 +17,12 @@ pub(super) enum TopRowRequest {
 }
 
 impl TopRowRequest {
-    pub(super) fn new(joystick_present: bool, hat_present: bool) -> Self {
-        match (joystick_present, hat_present) {
-            (true, true) => Self::Both,
-            (true, false) => Self::Joystick,
-            (false, true) => Self::Hat,
-            (false, false) => Self::None,
+    pub(super) fn new(joystick: Option<JoystickPanel>, hat: Option<HatPanel>) -> Self {
+        match (joystick, hat) {
+            (Some(_), Some(_)) => Self::Both,
+            (Some(_), None) => Self::Joystick,
+            (None, Some(_)) => Self::Hat,
+            (None, None) => Self::None,
         }
     }
 }
@@ -192,13 +192,22 @@ mod tests {
     use ratatui::layout::Rect;
 
     use super::{TopRowLayout, TopRowRequest, plan_top_row};
-    use crate::monitor::layout::boxes::{BoxMinimums, BoxRequest};
+    use crate::monitor::layout::boxes::{BoxMinimums, HatPanel, JoystickPanel, LayoutRequest};
+
+    fn dual_top_row_request() -> LayoutRequest {
+        LayoutRequest::new(
+            Some(JoystickPanel::new(1)),
+            Some(HatPanel::new()),
+            None,
+            None,
+            None,
+        )
+    }
 
     #[test]
     fn plan_top_row_prefers_side_by_side_when_both_fit() {
         let area = Rect::new(0, 0, 60, 12);
-        let minimums =
-            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
+        let minimums = BoxMinimums::for_request(dual_top_row_request());
 
         let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
 
@@ -208,8 +217,7 @@ mod tests {
     #[test]
     fn plan_top_row_prefers_hat_when_only_hat_fits_split_layout() {
         let area = Rect::new(0, 0, 20, 12);
-        let minimums =
-            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
+        let minimums = BoxMinimums::for_request(dual_top_row_request());
 
         let plan = plan_top_row(area, 2, minimums, TopRowRequest::Both);
 
@@ -219,8 +227,7 @@ mod tests {
     #[test]
     fn plan_top_row_falls_back_to_joystick_when_neither_split_widget_fits() {
         let area = Rect::new(0, 0, 12, 6);
-        let minimums =
-            BoxMinimums::for_request(BoxRequest::new(true, 1, true, false, false, false));
+        let minimums = BoxMinimums::for_request(dual_top_row_request());
 
         let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
 

@@ -5,7 +5,10 @@ use crate::ui::widgets;
 use super::Counts;
 use crate::monitor::{
     config,
-    layout::{BoxRequest, axes_layout, box_layout, split_buttons_column},
+    layout::{
+        AxesPanel, ButtonsPanel, HatPanel, JoystickPanel, LayoutRequest, TouchPanel, axes_layout,
+        box_layout, split_buttons_column,
+    },
     state::Focus,
     view_model::MonitorViewModel,
 };
@@ -56,27 +59,13 @@ pub(super) fn plan_areas(
     let (layout, buttons_box) = if let Some(buttons_area) = buttons_column {
         let layout = box_layout(
             main_area,
-            BoxRequest::new(
-                view_model.joystick_present(),
-                view_model.joystick_count(),
-                view_model.hat_present(),
-                touch_present,
-                axes_present,
-                false,
-            ),
+            layout_request(view_model, touch_present, axes_present, false),
         );
         (layout, Some(buttons_area))
     } else {
         let layout = box_layout(
             main_area,
-            BoxRequest::new(
-                view_model.joystick_present(),
-                view_model.joystick_count(),
-                view_model.hat_present(),
-                touch_present,
-                axes_present,
-                buttons_present,
-            ),
+            layout_request(view_model, touch_present, axes_present, buttons_present),
         );
         let buttons_box = layout.buttons_box;
         (layout, buttons_box)
@@ -110,6 +99,23 @@ pub(super) fn plan_areas(
         boxes,
         areas,
     }
+}
+
+fn layout_request(
+    view_model: &MonitorViewModel,
+    touch_present: bool,
+    axes_present: bool,
+    buttons_present: bool,
+) -> LayoutRequest {
+    LayoutRequest::new(
+        view_model
+            .joystick_present()
+            .then_some(JoystickPanel::new(view_model.joystick_count())),
+        view_model.hat_present().then_some(HatPanel::new()),
+        touch_present.then_some(TouchPanel::new()),
+        axes_present.then_some(AxesPanel::new()),
+        buttons_present.then_some(ButtonsPanel::new()),
+    )
 }
 
 fn synced_focus(current: Focus, axes_box_present: bool, buttons_box_present: bool) -> Focus {

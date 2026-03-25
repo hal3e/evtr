@@ -18,36 +18,104 @@ pub(crate) struct BoxLayout {
 }
 
 #[derive(Clone, Copy)]
-pub(crate) struct BoxRequest {
-    pub(crate) joystick_columns: usize,
-    pub(crate) joystick_present: bool,
-    pub(crate) hat_present: bool,
-    pub(crate) touch_present: bool,
-    pub(crate) axes_present: bool,
-    pub(crate) buttons_present: bool,
+pub(crate) struct LayoutRequest {
+    joystick: Option<JoystickPanel>,
+    hat: Option<HatPanel>,
+    touch: Option<TouchPanel>,
+    axes: Option<AxesPanel>,
+    buttons: Option<ButtonsPanel>,
 }
 
-impl BoxRequest {
+#[derive(Clone, Copy)]
+pub(crate) struct JoystickPanel {
+    columns: usize,
+}
+
+impl JoystickPanel {
+    pub(crate) fn new(columns: usize) -> Self {
+        Self { columns }
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct HatPanel;
+
+impl HatPanel {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct TouchPanel;
+
+impl TouchPanel {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct AxesPanel;
+
+impl AxesPanel {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+#[derive(Clone, Copy)]
+pub(crate) struct ButtonsPanel;
+
+impl ButtonsPanel {
+    pub(crate) fn new() -> Self {
+        Self
+    }
+}
+
+impl LayoutRequest {
     pub(crate) fn new(
-        joystick_present: bool,
-        joystick_columns: usize,
-        hat_present: bool,
-        touch_present: bool,
-        axes_present: bool,
-        buttons_present: bool,
+        joystick: Option<JoystickPanel>,
+        hat: Option<HatPanel>,
+        touch: Option<TouchPanel>,
+        axes: Option<AxesPanel>,
+        buttons: Option<ButtonsPanel>,
     ) -> Self {
         Self {
-            joystick_columns,
-            joystick_present,
-            hat_present,
-            touch_present,
-            axes_present,
-            buttons_present,
+            joystick,
+            hat,
+            touch,
+            axes,
+            buttons,
         }
     }
 
     fn top_row_request(self) -> TopRowRequest {
-        TopRowRequest::new(self.joystick_present, self.hat_present)
+        TopRowRequest::new(self.joystick, self.hat)
+    }
+
+    fn joystick_columns(self) -> usize {
+        self.joystick.map_or(0, |panel| panel.columns)
+    }
+
+    fn has_joystick(self) -> bool {
+        self.joystick.is_some()
+    }
+
+    fn has_hat(self) -> bool {
+        self.hat.is_some()
+    }
+
+    fn has_touch(self) -> bool {
+        self.touch.is_some()
+    }
+
+    fn has_axes(self) -> bool {
+        self.axes.is_some()
+    }
+
+    fn has_buttons(self) -> bool {
+        self.buttons.is_some()
     }
 }
 
@@ -61,13 +129,13 @@ struct BoxMinimums {
 }
 
 impl BoxMinimums {
-    fn for_request(request: BoxRequest) -> Self {
+    fn for_request(request: LayoutRequest) -> Self {
         Self {
-            axes: min_box_height(request.axes_present, 2),
-            buttons: min_box_height(request.buttons_present, 1),
-            touch: min_box_height(request.touch_present, config::TOUCHPAD_MIN_HEIGHT + 2),
-            joystick: min_box_height(request.joystick_present, config::JOYSTICK_MIN_SIZE),
-            hat: min_box_height(request.hat_present, config::HAT_MIN_SIZE),
+            axes: min_box_height(request.has_axes(), 2),
+            buttons: min_box_height(request.has_buttons(), 1),
+            touch: min_box_height(request.has_touch(), config::TOUCHPAD_MIN_HEIGHT + 2),
+            joystick: min_box_height(request.has_joystick(), config::JOYSTICK_MIN_SIZE),
+            hat: min_box_height(request.has_hat(), config::HAT_MIN_SIZE),
         }
     }
 
@@ -135,8 +203,8 @@ struct LowerSectionLayout {
 }
 
 impl LowerSectionLayout {
-    fn plan(remaining_height: u16, request: BoxRequest, minimums: BoxMinimums) -> Self {
-        match (request.axes_present, request.buttons_present) {
+    fn plan(remaining_height: u16, request: LayoutRequest, minimums: BoxMinimums) -> Self {
+        match (request.has_axes(), request.has_buttons()) {
             (true, true) => {
                 if remaining_height < minimums.axes + minimums.buttons {
                     if remaining_height >= minimums.buttons {
@@ -190,11 +258,11 @@ impl LowerSectionLayout {
     }
 }
 
-pub(crate) fn box_layout(area: Rect, request: BoxRequest) -> BoxLayout {
+pub(crate) fn box_layout(area: Rect, request: LayoutRequest) -> BoxLayout {
     let minimums = BoxMinimums::for_request(request);
     let top_row = plan_top_row(
         area,
-        request.joystick_columns,
+        request.joystick_columns(),
         minimums,
         request.top_row_request(),
     );
@@ -235,8 +303,12 @@ fn min_box_height(present: bool, height: u16) -> u16 {
     if present { height } else { 0 }
 }
 
-fn plan_touch(budget: LayoutBudget, request: BoxRequest, minimums: BoxMinimums) -> TouchAllocation {
-    if !request.touch_present {
+fn plan_touch(
+    budget: LayoutBudget,
+    request: LayoutRequest,
+    minimums: BoxMinimums,
+) -> TouchAllocation {
+    if !request.has_touch() {
         return TouchAllocation::hidden();
     }
 
@@ -273,14 +345,36 @@ fn take_next_box(area: Rect, cursor_y: &mut u16, height: u16, min_height: u16) -
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::{BoxRequest, LayoutBudget, LowerSectionLayout, box_layout, plan_touch};
+    use super::{
+        AxesPanel, ButtonsPanel, HatPanel, JoystickPanel, LayoutBudget, LayoutRequest,
+        LowerSectionLayout, TouchPanel, box_layout, plan_touch,
+    };
     use crate::monitor::config;
+
+    fn request(
+        joystick: Option<JoystickPanel>,
+        hat: Option<HatPanel>,
+        touch: Option<TouchPanel>,
+        axes: Option<AxesPanel>,
+        buttons: Option<ButtonsPanel>,
+    ) -> LayoutRequest {
+        LayoutRequest::new(joystick, hat, touch, axes, buttons)
+    }
 
     #[test]
     fn box_layout_gives_small_remaining_space_to_buttons_first() {
         let area = Rect::new(0, 0, 60, 1);
 
-        let layout = box_layout(area, BoxRequest::new(false, 0, false, false, true, true));
+        let layout = box_layout(
+            area,
+            request(
+                None,
+                None,
+                None,
+                Some(AxesPanel::new()),
+                Some(ButtonsPanel::new()),
+            ),
+        );
 
         assert!(layout.axes_box.is_none());
         assert_eq!(layout.buttons_box, Some(area));
@@ -290,7 +384,16 @@ mod tests {
     fn box_layout_drops_touch_when_it_cannot_fit_with_axes_and_buttons() {
         let area = Rect::new(0, 0, 60, config::TOUCHPAD_MIN_HEIGHT + 2);
 
-        let layout = box_layout(area, BoxRequest::new(false, 0, false, true, true, true));
+        let layout = box_layout(
+            area,
+            request(
+                None,
+                None,
+                Some(TouchPanel::new()),
+                Some(AxesPanel::new()),
+                Some(ButtonsPanel::new()),
+            ),
+        );
 
         assert!(layout.touch_box.is_none());
         assert!(layout.axes_box.is_some());
@@ -301,7 +404,16 @@ mod tests {
     fn box_layout_keeps_joystick_and_hat_side_by_side_when_both_fit() {
         let area = Rect::new(0, 0, 60, 12);
 
-        let layout = box_layout(area, BoxRequest::new(true, 1, true, false, false, false));
+        let layout = box_layout(
+            area,
+            request(
+                Some(JoystickPanel::new(1)),
+                Some(HatPanel::new()),
+                None,
+                None,
+                None,
+            ),
+        );
 
         assert!(layout.joystick_box.is_some());
         assert!(layout.hat_box.is_some());
@@ -311,7 +423,16 @@ mod tests {
     fn box_layout_falls_back_to_joystick_when_hat_cannot_fit() {
         let area = Rect::new(0, 0, 12, 6);
 
-        let layout = box_layout(area, BoxRequest::new(true, 1, true, false, false, false));
+        let layout = box_layout(
+            area,
+            request(
+                Some(JoystickPanel::new(1)),
+                Some(HatPanel::new()),
+                None,
+                None,
+                None,
+            ),
+        );
 
         assert!(layout.joystick_box.is_some());
         assert!(layout.hat_box.is_none());
@@ -319,7 +440,7 @@ mod tests {
 
     #[test]
     fn touch_allocation_uses_full_remaining_height_when_it_is_the_only_section() {
-        let request = BoxRequest::new(false, 0, false, true, false, false);
+        let request = request(None, None, Some(TouchPanel::new()), None, None);
         let minimums = super::BoxMinimums::for_request(request);
 
         let touch = plan_touch(LayoutBudget::new(12), request, minimums);
@@ -329,7 +450,13 @@ mod tests {
 
     #[test]
     fn lower_section_layout_prioritizes_buttons_when_budget_is_tight() {
-        let request = BoxRequest::new(false, 0, false, false, true, true);
+        let request = request(
+            None,
+            None,
+            None,
+            Some(AxesPanel::new()),
+            Some(ButtonsPanel::new()),
+        );
         let minimums = super::BoxMinimums::for_request(request);
 
         let lower = LowerSectionLayout::plan(1, request, minimums);
