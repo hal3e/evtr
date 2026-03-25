@@ -56,3 +56,67 @@ impl JoystickRenderer {
             .render(square, buf);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use super::JoystickRenderer;
+    use crate::monitor::{model::AbsoluteAxis, view_model::JoystickState};
+
+    fn joystick_state(left: bool, right: bool) -> JoystickState {
+        let stick = || {
+            (
+                AbsoluteAxis {
+                    min: -100,
+                    max: 100,
+                    value: 25,
+                },
+                AbsoluteAxis {
+                    min: -100,
+                    max: 100,
+                    value: -25,
+                },
+            )
+        };
+
+        JoystickState::from_axes(left.then(stick), right.then(stick))
+    }
+
+    fn non_blank_cells(buf: &Buffer) -> usize {
+        buf.content()
+            .iter()
+            .filter(|cell| !cell.symbol().trim().is_empty())
+            .count()
+    }
+
+    #[test]
+    fn render_with_no_sticks_leaves_the_buffer_unchanged() {
+        let area = Rect::new(0, 0, 16, 8);
+        let mut buf = Buffer::empty(area);
+
+        JoystickRenderer::render(area, &joystick_state(false, false), true, &mut buf);
+
+        assert_eq!(non_blank_cells(&buf), 0);
+    }
+
+    #[test]
+    fn render_with_one_stick_writes_to_the_buffer() {
+        let area = Rect::new(0, 0, 16, 8);
+        let mut buf = Buffer::empty(area);
+
+        JoystickRenderer::render(area, &joystick_state(true, false), true, &mut buf);
+
+        assert!(non_blank_cells(&buf) > 0);
+    }
+
+    #[test]
+    fn render_with_two_sticks_writes_to_the_buffer() {
+        let area = Rect::new(0, 0, 24, 8);
+        let mut buf = Buffer::empty(area);
+
+        JoystickRenderer::render(area, &joystick_state(true, true), true, &mut buf);
+
+        assert!(non_blank_cells(&buf) > 0);
+    }
+}

@@ -179,3 +179,81 @@ fn joystick_title(count: usize) -> &'static str {
         " Joystick "
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use super::{FrameData, joystick_title, render_frame};
+    use crate::monitor::{
+        model::InputCollection,
+        plan::{Counts, build_render_plan},
+        state::MonitorState,
+        touch::TouchState,
+        view_model::MonitorViewModel,
+    };
+
+    fn buffer_text(buf: &Buffer) -> String {
+        buf.content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    fn render_smoke(state: &MonitorState, area: Rect) -> String {
+        let inputs = InputCollection::from_entries_for_tests(Vec::new(), Vec::new(), Vec::new());
+        let touch = TouchState::disabled_for_tests();
+        let view_model = MonitorViewModel::from_inputs(Counts::new(0, 0, 0), &inputs, &touch, true);
+        let plan = build_render_plan(area, state, &view_model);
+        let data = FrameData::new("Example Pad", state, &inputs, &touch, &view_model);
+        let mut buf = Buffer::empty(area);
+
+        render_frame(area, &mut buf, &data, &plan);
+
+        buffer_text(&buf)
+    }
+
+    #[test]
+    fn joystick_title_uses_singular_for_zero_or_one() {
+        assert_eq!(joystick_title(0), " Joystick ");
+        assert_eq!(joystick_title(1), " Joystick ");
+    }
+
+    #[test]
+    fn joystick_title_uses_plural_for_multiple_sticks() {
+        assert_eq!(joystick_title(2), " Joysticks ");
+    }
+
+    #[test]
+    fn render_frame_writes_the_identifier_header() {
+        let state = MonitorState::new(Counts::new(0, 0, 0), Vec::new());
+        let text = render_smoke(&state, Rect::new(0, 0, 40, 10));
+
+        assert!(text.contains("Example Pad"));
+    }
+
+    #[test]
+    fn render_frame_shows_device_info_popup_content() {
+        let mut state = MonitorState::new(
+            Counts::new(0, 0, 0),
+            vec![
+                "name: Example Pad".to_string(),
+                "path: /dev/input/event3".to_string(),
+            ],
+        );
+        state.toggle_info();
+
+        let text = render_smoke(&state, Rect::new(0, 0, 60, 16));
+
+        assert!(text.contains("Device Info"));
+        assert!(text.contains("name: Example Pad"));
+    }
+
+    #[test]
+    fn render_frame_shows_help_popup_content() {
+        let mut state = MonitorState::new(Counts::new(0, 0, 0), Vec::new());
+        state.toggle_help();
+
+        let text = render_smoke(&state, Rect::new(0, 0, 60, 20));
+
+        assert!(text.contains("Help"));
+        assert!(text.contains("Scroll: Up/Down or k/j, PageUp/PageDown"));
+    }
+}

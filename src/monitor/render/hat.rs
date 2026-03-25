@@ -158,3 +158,73 @@ fn centered_indices(total: usize, count: usize) -> Vec<usize> {
     let start = (total.saturating_sub(count)) / 2;
     (start..start.saturating_add(count)).collect()
 }
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{buffer::Buffer, layout::Rect};
+
+    use super::{Edge, HatRenderer, active_points, centered_indices, edge_indices};
+    use crate::monitor::{model::AbsoluteAxis, view_model::HatState};
+
+    fn non_blank_cells(buf: &Buffer) -> usize {
+        buf.content()
+            .iter()
+            .filter(|cell| !cell.symbol().trim().is_empty())
+            .count()
+    }
+
+    #[test]
+    fn active_points_is_empty_for_neutral_hat_state() {
+        let state = HatState::from_axes(
+            AbsoluteAxis {
+                min: -1,
+                max: 1,
+                value: 0,
+            },
+            AbsoluteAxis {
+                min: -1,
+                max: 1,
+                value: 0,
+            },
+            false,
+        );
+
+        assert!(active_points(state, 8, 8, 4, 2).is_empty());
+    }
+
+    #[test]
+    fn edge_indices_cover_requested_start_and_end_ranges() {
+        assert_eq!(edge_indices(6, 2, Edge::Start), vec![0, 1]);
+        assert_eq!(edge_indices(6, 2, Edge::End), vec![4, 5]);
+    }
+
+    #[test]
+    fn centered_indices_handles_even_odd_and_clamped_counts() {
+        assert_eq!(centered_indices(7, 3), vec![2, 3, 4]);
+        assert_eq!(centered_indices(6, 2), vec![2, 3]);
+        assert_eq!(centered_indices(3, 10), vec![0, 1, 2]);
+    }
+
+    #[test]
+    fn render_returns_without_touching_a_too_small_area() {
+        let area = Rect::new(0, 0, 1, 1);
+        let mut buf = Buffer::empty(area);
+        let state = HatState::from_axes(
+            AbsoluteAxis {
+                min: -1,
+                max: 1,
+                value: 1,
+            },
+            AbsoluteAxis {
+                min: -1,
+                max: 1,
+                value: 0,
+            },
+            false,
+        );
+
+        HatRenderer::render(area, state, &mut buf);
+
+        assert_eq!(non_blank_cells(&buf), 0);
+    }
+}
