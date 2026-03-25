@@ -231,6 +231,105 @@ mod tests {
     }
 
     #[test]
+    fn reduce_toggle_help_switches_between_browsing_and_help_modes() {
+        let devices = labels(&["mouse"]);
+        let mut state = SelectorState::new(&devices, None);
+
+        assert_eq!(state.mode(), super::SelectorMode::Browsing);
+        assert_eq!(
+            state.reduce(SelectorCommand::ToggleHelp, &devices),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.mode(), super::SelectorMode::Help);
+
+        assert_eq!(
+            state.reduce(SelectorCommand::ToggleHelp, &devices),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.mode(), super::SelectorMode::Browsing);
+    }
+
+    #[test]
+    fn reduce_select_opens_the_current_selection_when_it_is_valid() {
+        let devices = labels(&["mouse", "gamepad"]);
+        let mut state = SelectorState::new(&devices, None);
+
+        assert_eq!(
+            state.reduce(SelectorCommand::Select, &devices),
+            SelectorTransition::OpenSelection
+        );
+        assert_eq!(state.selected_device_index(), Some(0));
+    }
+
+    #[test]
+    fn reduce_select_stays_when_filtered_selection_is_stale() {
+        let all_devices = labels(&["mouse", "gamepad"]);
+        let current_devices = labels(&["mouse"]);
+        let mut state = SelectorState::new(&all_devices, None);
+        state.reduce(SelectorCommand::AddChar('g'), &all_devices);
+
+        assert_eq!(state.filtered_indexes(), &[1]);
+        assert_eq!(state.selected_device_index(), Some(1));
+        assert_eq!(
+            state.reduce(SelectorCommand::Select, &current_devices),
+            SelectorTransition::Stay
+        );
+    }
+
+    #[test]
+    fn reduce_refresh_returns_refresh_devices_transition() {
+        let devices = labels(&["mouse"]);
+        let mut state = SelectorState::new(&devices, None);
+
+        assert_eq!(
+            state.reduce(SelectorCommand::Refresh, &devices),
+            SelectorTransition::RefreshDevices
+        );
+    }
+
+    #[test]
+    fn reduce_clear_search_clears_query_and_resets_selection() {
+        let devices = labels(&["alpha", "beta", "gamma"]);
+        let mut state = SelectorState::new(&devices, None);
+
+        state.reduce(SelectorCommand::AddChar('g'), &devices);
+        state.reduce(SelectorCommand::MoveDown, &devices);
+
+        assert_eq!(state.search_query(), "g");
+        assert_eq!(state.filtered_indexes(), &[2]);
+        assert_eq!(state.selected_filtered_index(), 0);
+
+        assert_eq!(
+            state.reduce(SelectorCommand::ClearSearch, &devices),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.search_query(), "");
+        assert_eq!(state.filtered_indexes(), &[0, 1, 2]);
+        assert_eq!(state.selected_filtered_index(), 0);
+    }
+
+    #[test]
+    fn reduce_delete_char_updates_query_and_filtered_indexes() {
+        let devices = labels(&["gamepad", "gyro pad", "mouse"]);
+        let mut state = SelectorState::new(&devices, None);
+
+        state.reduce(SelectorCommand::AddChar('g'), &devices);
+        state.reduce(SelectorCommand::AddChar('y'), &devices);
+
+        assert_eq!(state.search_query(), "gy");
+        assert_eq!(state.filtered_indexes(), &[1]);
+
+        assert_eq!(
+            state.reduce(SelectorCommand::DeleteChar, &devices),
+            SelectorTransition::Stay
+        );
+        assert_eq!(state.search_query(), "g");
+        assert_eq!(state.filtered_indexes(), &[0, 1]);
+        assert_eq!(state.selected_filtered_index(), 0);
+        assert_eq!(state.selected_device_index(), Some(0));
+    }
+
+    #[test]
     fn reduce_none_clears_error_while_browsing() {
         let devices = labels(&[]);
         let mut state = SelectorState::new(&devices, Some("unable to read /dev/input".to_string()));

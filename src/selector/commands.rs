@@ -168,6 +168,58 @@ mod tests {
             command_for(key(KeyCode::PageDown), SelectorMode::Browsing),
             SelectorCommand::PageDown
         );
+        assert_eq!(
+            command_for(key(KeyCode::Home), SelectorMode::Browsing),
+            SelectorCommand::Home
+        );
+        assert_eq!(
+            command_for(key(KeyCode::End), SelectorMode::Browsing),
+            SelectorCommand::End
+        );
+    }
+
+    #[test]
+    fn command_for_maps_selector_action_keys_to_explicit_variants() {
+        assert_eq!(
+            command_for(key(KeyCode::Enter), SelectorMode::Browsing),
+            SelectorCommand::Select
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Backspace), SelectorMode::Browsing),
+            SelectorCommand::DeleteChar
+        );
+        assert_eq!(
+            command_for(ctrl_char('u'), SelectorMode::Browsing),
+            SelectorCommand::ClearSearch
+        );
+        assert_eq!(
+            command_for(ctrl_char('r'), SelectorMode::Browsing),
+            SelectorCommand::Refresh
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('?')), SelectorMode::Browsing),
+            SelectorCommand::ToggleHelp
+        );
+    }
+
+    #[test]
+    fn command_for_help_mode_only_allows_close_or_exit_keys() {
+        assert_eq!(
+            command_for(key(KeyCode::Char('?')), SelectorMode::Help),
+            SelectorCommand::ToggleHelp
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Enter), SelectorMode::Help),
+            SelectorCommand::None
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Backspace), SelectorMode::Help),
+            SelectorCommand::None
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('a')), SelectorMode::Help),
+            SelectorCommand::None
+        );
     }
 
     #[test]
