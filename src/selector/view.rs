@@ -1,7 +1,7 @@
 use ratatui::{
     buffer::Buffer,
     layout::{Constraint, Layout, Rect},
-    style::Style,
+    style::Modifier,
     widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
@@ -83,11 +83,16 @@ fn render_device_list(
             .label(device_index)
             .map(|identifier| ListItem::new(identifier.to_string()))
     });
+    let item_style = theme::style_text().remove_modifier(Modifier::BOLD);
 
     let list = List::new(items)
         .block(widgets::accent_titled_block(" Devices "))
-        .style(theme::style_text())
-        .highlight_style(Style::default().bg(theme::MUTED_COLOR))
+        .style(item_style)
+        .highlight_style(
+            item_style
+                .bg(theme::MUTED_COLOR)
+                .add_modifier(Modifier::BOLD),
+        )
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
