@@ -153,15 +153,51 @@ pub(super) fn apply_command(
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{Command, command_for, help_lines};
-    use crate::monitor::state::ActivePopup;
+    use super::{Command, apply_command, command_for, help_lines};
+    use crate::monitor::{
+        MonitorExit,
+        model::{AbsoluteState, DeviceInput, InputCollection, InputKind},
+        plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState},
+        state::{ActivePopup, Focus, MonitorState},
+    };
 
     fn key(code: KeyCode) -> KeyEvent {
         KeyEvent::new(code, KeyModifiers::NONE)
     }
 
+    fn shifted_char(c: char) -> KeyEvent {
+        KeyEvent::new(KeyCode::Char(c), KeyModifiers::SHIFT)
+    }
+
     fn ctrl_char(c: char) -> KeyEvent {
         KeyEvent::new(KeyCode::Char(c), KeyModifiers::CONTROL)
+    }
+
+    fn navigation(focus: Focus, focusable: bool) -> NavigationContext {
+        NavigationContext::new_for_tests(
+            focus,
+            TestScrollState {
+                axis: 1,
+                button_row: 1,
+            },
+            TestScrollBounds::new_for_tests(4, 3, true, true),
+            focusable,
+        )
+    }
+
+    fn monitor_state() -> MonitorState {
+        MonitorState::new(Counts::new(2, 0, 6), vec!["info".to_string()])
+    }
+
+    fn relative_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Relative(value),
+        }
+    }
+
+    fn empty_inputs() -> InputCollection {
+        InputCollection::from_entries_for_tests(Vec::new(), Vec::new(), Vec::new())
     }
 
     #[test]
@@ -188,6 +224,98 @@ mod tests {
     }
 
     #[test]
+    fn command_for_maps_normal_mode_bindings() {
+        assert_eq!(
+            command_for(key(KeyCode::Char('r')), ActivePopup::None),
+            Command::Reset
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Home), ActivePopup::None),
+            Command::Home
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('g')), ActivePopup::None),
+            Command::Home
+        );
+        assert_eq!(
+            command_for(key(KeyCode::End), ActivePopup::None),
+            Command::End
+        );
+        assert_eq!(
+            command_for(shifted_char('G'), ActivePopup::None),
+            Command::End
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Up), ActivePopup::None),
+            Command::Scroll(-1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('k')), ActivePopup::None),
+            Command::Scroll(-1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Down), ActivePopup::None),
+            Command::Scroll(1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('j')), ActivePopup::None),
+            Command::Scroll(1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::PageUp), ActivePopup::None),
+            Command::Page(-1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::PageDown), ActivePopup::None),
+            Command::Page(1)
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('i')), ActivePopup::None),
+            Command::ToggleInfo
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('y')), ActivePopup::None),
+            Command::ToggleInvertY
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('?')), ActivePopup::None),
+            Command::ToggleHelp
+        );
+        assert_eq!(
+            command_for(shifted_char('J'), ActivePopup::None),
+            Command::FocusNext
+        );
+        assert_eq!(
+            command_for(shifted_char('K'), ActivePopup::None),
+            Command::FocusPrev
+        );
+    }
+
+    #[test]
+    fn command_for_popup_modes_only_allows_close_or_exit() {
+        assert_eq!(
+            command_for(key(KeyCode::Char('i')), ActivePopup::Info),
+            Command::ToggleInfo
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('?')), ActivePopup::Help),
+            Command::ToggleHelp
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Enter), ActivePopup::Info),
+            Command::None
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('j')), ActivePopup::Info),
+            Command::None
+        );
+        assert_eq!(
+            command_for(key(KeyCode::Char('i')), ActivePopup::Help),
+            Command::None
+        );
+    }
+
+    #[test]
     fn help_lines_match_the_documented_monitor_bindings() {
         assert_eq!(
             help_lines(),
@@ -203,5 +331,160 @@ mod tests {
                 "Help: ? (press ? or Esc to close)".to_string(),
             ]
         );
+    }
+
+    #[test]
+    fn apply_command_returns_requested_exit_variant() {
+        let navigation = navigation(Focus::Axes, true);
+        let mut state = monitor_state();
+        let mut inputs = empty_inputs();
+
+        assert!(matches!(
+            apply_command(Command::BackToSelector, &mut state, &mut inputs, navigation),
+            Some(MonitorExit::BackToSelector)
+        ));
+        assert!(matches!(
+            apply_command(Command::ExitApp, &mut state, &mut inputs, navigation),
+            Some(MonitorExit::ExitApp)
+        ));
+    }
+
+    #[test]
+    fn apply_command_reset_clears_relative_axes() {
+        let mut inputs = InputCollection::from_entries_for_tests(
+            vec![(
+                0,
+                DeviceInput {
+                    name: "abs_x".to_string(),
+                    input_type: InputKind::Absolute(AbsoluteState::kernel(-10, 10, 4)),
+                },
+            )],
+            vec![
+                (1, relative_input("rel_x", 3)),
+                (2, relative_input("rel_y", -2)),
+            ],
+            Vec::new(),
+        );
+
+        apply_command(
+            Command::Reset,
+            &mut monitor_state(),
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+
+        assert_eq!(
+            inputs.relative_inputs()[0].input_type,
+            InputKind::Relative(0)
+        );
+        assert_eq!(
+            inputs.relative_inputs()[1].input_type,
+            InputKind::Relative(0)
+        );
+        assert_eq!(
+            inputs.absolute_inputs()[0].input_type,
+            InputKind::Absolute(AbsoluteState::kernel(-10, 10, 4))
+        );
+    }
+
+    #[test]
+    fn apply_command_updates_scroll_focus_popup_and_invert_state() {
+        let mut state = monitor_state();
+        let mut inputs = empty_inputs();
+
+        apply_command(
+            Command::Scroll(1),
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.axis_scroll(), 1);
+        assert_eq!(state.button_row_scroll(), 0);
+
+        apply_command(
+            Command::Page(1),
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.axis_scroll(), 4);
+
+        apply_command(
+            Command::Home,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.axis_scroll(), 0);
+
+        apply_command(
+            Command::End,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.axis_scroll(), 4);
+
+        apply_command(
+            Command::FocusNext,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.focus(), Focus::Buttons);
+
+        apply_command(
+            Command::FocusPrev,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Buttons, true),
+        );
+        assert_eq!(state.focus(), Focus::Axes);
+
+        assert!(state.joystick_invert_y());
+        apply_command(
+            Command::ToggleInvertY,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert!(!state.joystick_invert_y());
+
+        apply_command(
+            Command::ToggleInfo,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.active_popup(), ActivePopup::Info);
+
+        apply_command(
+            Command::ToggleHelp,
+            &mut state,
+            &mut inputs,
+            navigation(Focus::Axes, true),
+        );
+        assert_eq!(state.active_popup(), ActivePopup::Help);
+    }
+
+    #[test]
+    fn apply_command_none_is_a_no_op() {
+        let mut state = monitor_state();
+        let mut inputs = empty_inputs();
+
+        assert!(
+            apply_command(
+                Command::None,
+                &mut state,
+                &mut inputs,
+                navigation(Focus::Axes, true),
+            )
+            .is_none()
+        );
+        assert_eq!(state.axis_scroll(), 0);
+        assert_eq!(state.button_row_scroll(), 0);
+        assert_eq!(state.focus(), Focus::Axes);
+        assert_eq!(state.active_popup(), ActivePopup::None);
+        assert!(state.joystick_invert_y());
     }
 }

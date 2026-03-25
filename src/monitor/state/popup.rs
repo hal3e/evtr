@@ -49,7 +49,20 @@ fn next_focus(current: Focus, focusable: bool) -> Focus {
 
 #[cfg(test)]
 mod tests {
-    use super::{ActivePopup, Focus, next_focus, toggled_popup};
+    use super::{ActivePopup, Focus, MonitorState, next_focus, toggled_popup};
+    use crate::monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState};
+
+    fn navigation(focus: Focus, focusable: bool) -> NavigationContext {
+        NavigationContext::new_for_tests(
+            focus,
+            TestScrollState {
+                axis: 0,
+                button_row: 0,
+            },
+            TestScrollBounds::new_for_tests(0, 0, false, false),
+            focusable,
+        )
+    }
 
     #[test]
     fn toggled_popup_switches_between_help_and_info() {
@@ -72,5 +85,55 @@ mod tests {
         assert_eq!(next_focus(Focus::Axes, true), Focus::Buttons);
         assert_eq!(next_focus(Focus::Buttons, true), Focus::Axes);
         assert_eq!(next_focus(Focus::Axes, false), Focus::Axes);
+    }
+
+    #[test]
+    fn toggle_help_closes_when_called_twice() {
+        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+
+        state.toggle_help();
+        assert_eq!(state.active_popup(), ActivePopup::Help);
+
+        state.toggle_help();
+        assert_eq!(state.active_popup(), ActivePopup::None);
+    }
+
+    #[test]
+    fn toggle_info_closes_when_called_twice() {
+        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+
+        state.toggle_info();
+        assert_eq!(state.active_popup(), ActivePopup::Info);
+
+        state.toggle_info();
+        assert_eq!(state.active_popup(), ActivePopup::None);
+    }
+
+    #[test]
+    fn toggle_help_and_info_replace_each_other() {
+        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+
+        state.toggle_help();
+        assert_eq!(state.active_popup(), ActivePopup::Help);
+
+        state.toggle_info();
+        assert_eq!(state.active_popup(), ActivePopup::Info);
+
+        state.toggle_help();
+        assert_eq!(state.active_popup(), ActivePopup::Help);
+    }
+
+    #[test]
+    fn focus_prev_uses_the_same_cycle_behavior_as_focus_next() {
+        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+
+        state.focus_prev(navigation(Focus::Axes, true));
+        assert_eq!(state.focus(), Focus::Buttons);
+
+        state.focus_prev(navigation(Focus::Buttons, true));
+        assert_eq!(state.focus(), Focus::Axes);
+
+        state.focus_prev(navigation(Focus::Axes, false));
+        assert_eq!(state.focus(), Focus::Axes);
     }
 }

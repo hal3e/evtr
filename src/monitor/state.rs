@@ -61,3 +61,43 @@ impl MonitorState {
         self.joystick_invert_y = !self.joystick_invert_y;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{ActivePopup, Focus, MonitorState};
+    use crate::monitor::plan::Counts;
+
+    #[test]
+    fn new_prefers_axes_focus_when_any_axes_exist() {
+        let state = MonitorState::new(Counts::new(1, 0, 3), vec!["info".to_string()]);
+
+        assert_eq!(state.focus, Focus::Axes);
+    }
+
+    #[test]
+    fn new_falls_back_to_buttons_focus_when_no_axes_exist() {
+        let state = MonitorState::new(Counts::new(0, 0, 3), vec!["info".to_string()]);
+
+        assert_eq!(state.focus, Focus::Buttons);
+    }
+
+    #[test]
+    fn new_preserves_info_lines_and_defaults() {
+        let state = MonitorState::new(
+            Counts::new(0, 1, 2),
+            vec![
+                "name: pad".to_string(),
+                "path: /dev/input/event3".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            state.info_lines(),
+            &["name: pad", "path: /dev/input/event3"]
+        );
+        assert_eq!(state.active_popup, ActivePopup::None);
+        assert_eq!(state.axis_scroll, 0);
+        assert_eq!(state.button_row_scroll, 0);
+        assert!(state.joystick_invert_y());
+    }
+}

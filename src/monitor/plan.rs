@@ -15,6 +15,9 @@ use self::{
     scroll::{ScrollBounds, ScrollState, VisibleCapacities, clamp_scroll_state},
 };
 
+#[cfg(test)]
+pub(crate) use self::scroll::{ScrollBounds as TestScrollBounds, ScrollState as TestScrollState};
+
 #[derive(Clone, Copy)]
 pub(super) struct Counts {
     abs: usize,
@@ -76,6 +79,21 @@ impl NavigationContext {
 
     pub(super) fn focusable(self) -> bool {
         self.focusable
+    }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(
+        focus: Focus,
+        scroll: ScrollState,
+        scroll_bounds: ScrollBounds,
+        focusable: bool,
+    ) -> Self {
+        Self {
+            focus,
+            scroll,
+            scroll_bounds,
+            focusable,
+        }
     }
 }
 

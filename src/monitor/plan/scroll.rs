@@ -68,6 +68,23 @@ impl ScrollBounds {
             self.rel_max_start,
         )
     }
+
+    #[cfg(test)]
+    pub(crate) fn new_for_tests(
+        axes_max: usize,
+        button_row_max_start: usize,
+        axes_overflow: bool,
+        buttons_overflow: bool,
+    ) -> Self {
+        Self {
+            axes_max,
+            abs_max_start: axes_max,
+            rel_max_start: 0,
+            button_row_max_start,
+            axes_overflow,
+            buttons_overflow,
+        }
+    }
 }
 
 pub(super) struct VisibleCapacities {
