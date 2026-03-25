@@ -84,6 +84,27 @@ impl TouchState {
     pub(super) fn ranges(&self) -> Option<((i32, i32), (i32, i32))> {
         Some((self.x_range()?, self.y_range()?))
     }
+
+    #[cfg(test)]
+    pub(super) fn disabled_for_tests() -> Self {
+        Self::disabled()
+    }
+
+    #[cfg(test)]
+    pub(super) fn touch_device_for_tests(enabled: bool) -> Self {
+        let range = if enabled {
+            TouchRange::fixed(0, 100)
+        } else {
+            TouchRange::Unknown
+        };
+
+        Self::from_parts(
+            TouchMode::SingleTouch { contact_key: None },
+            None,
+            range,
+            range,
+        )
+    }
 }
 
 fn initialize_slots(slots: &mut [TouchSlot], mode: TouchMode) {

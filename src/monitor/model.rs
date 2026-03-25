@@ -5,6 +5,8 @@ mod types;
 
 use evdev::{AbsoluteAxisCode, Device, InputEvent};
 
+#[cfg(test)]
+pub(super) use self::types::AbsoluteState;
 pub(super) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
 use self::{
     super::bootstrap::Bootstrapped,
@@ -78,6 +80,15 @@ impl InputCollection {
             buckets,
             event_index,
         }
+    }
+
+    #[cfg(test)]
+    pub(super) fn from_entries_for_tests(
+        absolute: Vec<(u16, DeviceInput)>,
+        relative: Vec<(u16, DeviceInput)>,
+        buttons: Vec<(u16, DeviceInput)>,
+    ) -> Self {
+        Self::from_entries(absolute, relative, buttons)
     }
 }
 

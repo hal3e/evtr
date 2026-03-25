@@ -158,8 +158,32 @@ fn sign(value: i32) -> i32 {
 
 #[cfg(test)]
 mod tests {
-    use super::{HatState, JoystickState};
-    use crate::monitor::model::AbsoluteAxis;
+    use evdev::AbsoluteAxisCode;
+
+    use super::{HatState, JoystickState, MonitorViewModel};
+    use crate::monitor::{
+        model::{AbsoluteAxis, AbsoluteState, DeviceInput, InputCollection, InputKind},
+        plan::Counts,
+        touch::TouchState,
+    };
+
+    fn absolute_input(name: &str, value: i32) -> DeviceInput {
+        DeviceInput {
+            name: name.to_string(),
+            input_type: InputKind::Absolute(AbsoluteState::kernel(-100, 100, value)),
+        }
+    }
+
+    fn input_collection(absolute: Vec<(AbsoluteAxisCode, DeviceInput)>) -> InputCollection {
+        InputCollection::from_entries_for_tests(
+            absolute
+                .into_iter()
+                .map(|(code, input)| (code.0, input))
+                .collect(),
+            Vec::new(),
+            Vec::new(),
+        )
+    }
 
     #[test]
     fn joystick_count_tracks_visible_sticks() {
@@ -200,5 +224,80 @@ mod tests {
 
         assert_eq!(state.x, -1);
         assert_eq!(state.y, -1);
+    }
+
+    #[test]
+    fn from_inputs_derives_joystick_and_hat_presence_without_touch() {
+        let inputs = input_collection(vec![
+            (AbsoluteAxisCode::ABS_X, absolute_input("abs_x", 25)),
+            (AbsoluteAxisCode::ABS_Y, absolute_input("abs_y", -25)),
+            (AbsoluteAxisCode::ABS_HAT0X, absolute_input("hat_x", 1)),
+            (AbsoluteAxisCode::ABS_HAT0Y, absolute_input("hat_y", -1)),
+        ]);
+        let view_model = MonitorViewModel::from_inputs(
+            Counts::new(4, 0, 0),
+            &inputs,
+            &TouchState::disabled_for_tests(),
+            true,
+        );
+
+        assert!(view_model.joystick_present());
+        assert_eq!(view_model.joystick_count(), 1);
+        assert!(view_model.hat_present());
+        assert!(view_model.axes_available());
+        assert!(!view_model.buttons_available());
+        assert!(!view_model.touch_enabled());
+    }
+
+    #[test]
+    fn from_inputs_suppresses_joystick_and_hat_for_touch_devices() {
+        let inputs = input_collection(vec![
+            (AbsoluteAxisCode::ABS_X, absolute_input("abs_x", 25)),
+            (AbsoluteAxisCode::ABS_Y, absolute_input("abs_y", -25)),
+            (AbsoluteAxisCode::ABS_HAT0X, absolute_input("hat_x", 1)),
+            (AbsoluteAxisCode::ABS_HAT0Y, absolute_input("hat_y", -1)),
+        ]);
+        let view_model = MonitorViewModel::from_inputs(
+            Counts::new(4, 0, 0),
+            &inputs,
+            &TouchState::touch_device_for_tests(true),
+            true,
+        );
+
+        assert!(!view_model.joystick_present());
+        assert!(!view_model.hat_present());
+        assert!(view_model.touch_enabled());
+    }
+
+    #[test]
+    fn from_inputs_tracks_axes_and_button_availability_from_counts() {
+        let inputs = input_collection(Vec::new());
+        let view_model = MonitorViewModel::from_inputs(
+            Counts::new(1, 1, 2),
+            &inputs,
+            &TouchState::disabled_for_tests(),
+            true,
+        );
+
+        assert!(view_model.axes_available());
+        assert!(view_model.buttons_available());
+        assert!(!view_model.joystick_present());
+        assert!(!view_model.hat_present());
+        assert!(!view_model.touch_enabled());
+    }
+
+    #[test]
+    fn from_inputs_reports_touch_disabled_when_ranges_are_unknown() {
+        let inputs = input_collection(Vec::new());
+        let view_model = MonitorViewModel::from_inputs(
+            Counts::new(0, 0, 0),
+            &inputs,
+            &TouchState::touch_device_for_tests(false),
+            true,
+        );
+
+        assert!(!view_model.touch_enabled());
+        assert!(!view_model.joystick_present());
+        assert!(!view_model.hat_present());
     }
 }
