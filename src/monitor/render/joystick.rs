@@ -8,39 +8,14 @@ use ratatui::{
     },
 };
 
-use crate::monitor::{config, model::AbsoluteAxis};
+use crate::monitor::{
+    config,
+    view_model::{JoystickState, StickState},
+};
 
 use super::geometry::{
     centered_pair, fit_centered_aspect_rect, normalize_ratio, signed_unit_point,
 };
-
-#[derive(Clone, Copy)]
-pub(crate) struct StickState {
-    pub(crate) x: AbsoluteAxis,
-    pub(crate) y: AbsoluteAxis,
-}
-
-#[derive(Default)]
-pub(crate) struct JoystickState {
-    pub(crate) left: Option<StickState>,
-    pub(crate) right: Option<StickState>,
-}
-
-impl JoystickState {
-    pub(crate) fn from_axes(
-        left: Option<(AbsoluteAxis, AbsoluteAxis)>,
-        right: Option<(AbsoluteAxis, AbsoluteAxis)>,
-    ) -> Self {
-        Self {
-            left: left.map(|(x, y)| StickState { x, y }),
-            right: right.map(|(x, y)| StickState { x, y }),
-        }
-    }
-
-    pub(crate) fn count(&self) -> usize {
-        self.left.is_some() as usize + self.right.is_some() as usize
-    }
-}
 
 pub(crate) struct JoystickRenderer;
 

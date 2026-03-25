@@ -9,6 +9,7 @@ mod state;
 mod theme;
 mod touch;
 mod ui;
+mod view_model;
 
 use crossterm::event::{Event, EventStream as TermEventStream, KeyEventKind};
 use futures::StreamExt;
@@ -19,9 +20,10 @@ use self::{
     controls::{apply_command, command_for},
     model::InputCollection,
     plan::{Counts, RenderPlan, build_render_plan},
-    render::frame::render_frame,
+    render::frame::{FrameData, render_frame},
     state::{MonitorState, build_device_info_lines},
     touch::TouchState,
+    view_model::MonitorViewModel,
 };
 use crate::{
     error::{ErrorArea, Result},
@@ -123,7 +125,8 @@ impl DeviceMonitor {
                                 .size()
                                 .map(Rect::from)
                                 .map_err(|err| ErrorArea::Monitor.io("terminal size", err))?;
-                            let plan = monitor.sync_render_plan(area);
+                            let view_model = monitor.build_view_model();
+                            let plan = monitor.sync_render_plan(area, &view_model);
                             let navigation = plan.navigation_context();
                             if let Some(exit) = apply_command(
                                 command_for(key, monitor.state.active_popup()),
@@ -156,20 +159,29 @@ impl DeviceMonitor {
     }
 
     fn render(&mut self, area: Rect, buf: &mut Buffer) {
-        let plan = self.sync_render_plan(area);
-        render_frame(
-            area,
-            buf,
+        let view_model = self.build_view_model();
+        let plan = self.sync_render_plan(area, &view_model);
+        let frame_data = FrameData::new(
             &self.identifier,
             &self.state,
             &self.inputs,
             &self.touch,
-            &plan,
+            &view_model,
         );
+        render_frame(area, buf, &frame_data, &plan);
     }
 
-    fn sync_render_plan(&mut self, area: Rect) -> RenderPlan {
-        let plan = build_render_plan(area, &self.state, &self.inputs, &self.touch);
+    fn build_view_model(&self) -> MonitorViewModel {
+        MonitorViewModel::from_inputs(
+            self.state.counts(),
+            &self.inputs,
+            &self.touch,
+            self.state.joystick_invert_y(),
+        )
+    }
+
+    fn sync_render_plan(&mut self, area: Rect, view_model: &MonitorViewModel) -> RenderPlan {
+        let plan = build_render_plan(area, &self.state, view_model);
         self.state.sync_from_navigation(plan.navigation_context());
         plan
     }

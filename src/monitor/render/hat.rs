@@ -8,29 +8,9 @@ use ratatui::{
     },
 };
 
-use crate::monitor::{config, model::AbsoluteAxis};
+use crate::monitor::{config, view_model::HatState};
 
 use super::geometry::{coord_from_index, fit_centered_aspect_rect, inset_rect};
-
-#[derive(Clone, Copy)]
-pub(crate) struct HatState {
-    pub(crate) x: i32,
-    pub(crate) y: i32,
-}
-
-impl HatState {
-    pub(crate) fn from_axes(x: AbsoluteAxis, y: AbsoluteAxis, invert_y: bool) -> Self {
-        let y = if invert_y {
-            -sign(y.value)
-        } else {
-            sign(y.value)
-        };
-        Self {
-            x: sign(x.value),
-            y,
-        }
-    }
-}
 
 pub(crate) struct HatRenderer;
 
@@ -66,16 +46,6 @@ impl HatRenderer {
                 }
             })
             .render(square, buf);
-    }
-}
-
-fn sign(value: i32) -> i32 {
-    if value > 0 {
-        1
-    } else if value < 0 {
-        -1
-    } else {
-        0
     }
 }
 

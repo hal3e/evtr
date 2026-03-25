@@ -6,14 +6,12 @@ use ratatui::layout::Rect;
 use super::{
     config,
     layout::main_layout,
-    model::InputCollection,
-    render::{hat::HatState, joystick::JoystickState},
     state::{Focus, MonitorState},
-    touch::TouchState,
+    view_model::MonitorViewModel,
 };
 
 use self::{
-    areas::{PlannedAreas, PlannedBoxes, WidgetState, plan_areas},
+    areas::{PlannedAreas, PlannedBoxes, plan_areas},
     scroll::{ScrollBounds, ScrollState, VisibleCapacities, clamp_scroll_state},
 };
 
@@ -33,6 +31,10 @@ impl Counts {
         self.abs + self.rel
     }
 
+    pub(crate) fn has_buttons(&self) -> bool {
+        self.btn > 0
+    }
+
     fn filtered(&self, abs_visible: bool, rel_visible: bool, buttons_visible: bool) -> Self {
         Self {
             abs: if abs_visible { self.abs } else { 0 },
@@ -49,8 +51,6 @@ pub(crate) struct RenderPlan {
     pub(crate) scroll_bounds: ScrollBounds,
     pub(crate) boxes: PlannedBoxes,
     pub(crate) areas: PlannedAreas,
-    pub(crate) joystick: JoystickState,
-    pub(crate) hat_state: Option<HatState>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -102,20 +102,12 @@ impl RenderPlan {
 pub(crate) fn build_render_plan(
     area: Rect,
     state: &MonitorState,
-    inputs: &InputCollection,
-    touch: &TouchState,
+    view_model: &MonitorViewModel,
 ) -> RenderPlan {
     let counts = state.counts();
     let [_, content] = main_layout(area);
     let min_button_gap = config::BTN_COL_GAP.max(config::COMPACT_BTN_COL_GAP);
-    let widget_state = WidgetState::from_inputs(state, counts, inputs, touch);
-    let area_plan = plan_areas(
-        content,
-        counts,
-        min_button_gap,
-        state.focus(),
-        &widget_state,
-    );
+    let area_plan = plan_areas(content, counts, min_button_gap, state.focus(), view_model);
     let capacities = VisibleCapacities::from_areas(counts, &area_plan.areas);
 
     let abs_visible = capacities.abs > 0;
@@ -138,8 +130,6 @@ pub(crate) fn build_render_plan(
         scroll_bounds,
         boxes: area_plan.boxes,
         areas: area_plan.areas,
-        joystick: widget_state.joystick,
-        hat_state: widget_state.hat_state,
     }
 }
 
@@ -151,7 +141,6 @@ mod tests {
             areas::{PlannedAreas, PlannedBoxes},
             scroll::{ScrollBounds, ScrollState},
         },
-        render::joystick::JoystickState,
         state::Focus,
     };
 
@@ -186,8 +175,6 @@ mod tests {
                 touch: None,
                 buttons: None,
             },
-            joystick: JoystickState::default(),
-            hat_state: None,
         };
 
         let navigation = plan.navigation_context();

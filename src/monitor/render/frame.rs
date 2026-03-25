@@ -20,6 +20,7 @@ use crate::monitor::{
     plan::RenderPlan,
     state::{ActivePopup, MonitorState},
     touch::TouchState,
+    view_model::MonitorViewModel,
 };
 
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
@@ -37,38 +38,50 @@ const HELP_POPUP_LINES: &[&str] = &[
     "Help: ? (press ? or Esc to close)",
 ];
 
-pub(crate) fn render_frame(
-    area: Rect,
-    buf: &mut Buffer,
-    identifier: &str,
-    state: &MonitorState,
-    inputs: &InputCollection,
-    touch: &TouchState,
-    plan: &RenderPlan,
-) {
+pub(crate) struct FrameData<'a> {
+    identifier: &'a str,
+    state: &'a MonitorState,
+    inputs: &'a InputCollection,
+    touch: &'a TouchState,
+    view_model: &'a MonitorViewModel,
+}
+
+impl<'a> FrameData<'a> {
+    pub(crate) fn new(
+        identifier: &'a str,
+        state: &'a MonitorState,
+        inputs: &'a InputCollection,
+        touch: &'a TouchState,
+        view_model: &'a MonitorViewModel,
+    ) -> Self {
+        Self {
+            identifier,
+            state,
+            inputs,
+            touch,
+            view_model,
+        }
+    }
+}
+
+pub(crate) fn render_frame(area: Rect, buf: &mut Buffer, data: &FrameData<'_>, plan: &RenderPlan) {
     let [header, _] = main_layout(area);
 
-    Paragraph::new(identifier)
+    Paragraph::new(data.identifier)
         .style(config::style_header())
         .alignment(Alignment::Center)
         .render(header, buf);
 
-    render_content(buf, state, inputs, touch, plan);
+    render_content(buf, data, plan);
 
-    match state.active_popup() {
+    match data.state.active_popup() {
         ActivePopup::None => {}
-        ActivePopup::Info => render_info_popup(area, buf, state),
+        ActivePopup::Info => render_info_popup(area, buf, data.state),
         ActivePopup::Help => render_help_popup(area, buf),
     }
 }
 
-fn render_content(
-    buf: &mut Buffer,
-    state: &MonitorState,
-    inputs: &InputCollection,
-    touch: &TouchState,
-    plan: &RenderPlan,
-) {
+fn render_content(buf: &mut Buffer, data: &FrameData<'_>, plan: &RenderPlan) {
     if let Some(box_area) = plan.boxes.axes {
         widgets::render_panel_box(
             box_area,
@@ -78,7 +91,11 @@ fn render_content(
         );
     }
     if let Some(box_area) = plan.boxes.joystick {
-        widgets::render_unfocused_panel_box(box_area, joystick_title(plan.joystick.count()), buf);
+        widgets::render_unfocused_panel_box(
+            box_area,
+            joystick_title(data.view_model.joystick_count()),
+            buf,
+        );
     }
     if let Some(box_area) = plan.boxes.hat {
         widgets::render_unfocused_panel_box(box_area, " D-pad ", buf);
@@ -97,16 +114,26 @@ fn render_content(
 
     let (abs_off, rel_off) = plan.axis_offsets();
     if let Some(abs_area) = plan.areas.abs {
-        AxisRenderer::render_axes_with_scroll(inputs.absolute_inputs(), abs_area, abs_off, buf);
+        AxisRenderer::render_axes_with_scroll(
+            data.inputs.absolute_inputs(),
+            abs_area,
+            abs_off,
+            buf,
+        );
     }
 
     if let Some(rel_area) = plan.areas.rel {
-        AxisRenderer::render_axes_with_scroll(inputs.relative_inputs(), rel_area, rel_off, buf);
+        AxisRenderer::render_axes_with_scroll(
+            data.inputs.relative_inputs(),
+            rel_area,
+            rel_off,
+            buf,
+        );
     }
 
-    if let (Some(touch_area), Some((x_range, y_range))) = (plan.areas.touch, touch.ranges()) {
-        let active_points = touch.active_points();
-        let inactive_points = touch.inactive_points();
+    if let (Some(touch_area), Some((x_range, y_range))) = (plan.areas.touch, data.touch.ranges()) {
+        let active_points = data.touch.active_points();
+        let inactive_points = data.touch.inactive_points();
         TouchRenderer::render(
             touch_area,
             &active_points,
@@ -120,19 +147,19 @@ fn render_content(
     if let Some(joystick_area) = plan.areas.joystick {
         JoystickRenderer::render(
             joystick_area,
-            &plan.joystick,
-            state.joystick_invert_y(),
+            data.view_model.joystick(),
+            data.state.joystick_invert_y(),
             buf,
         );
     }
 
-    if let (Some(hat_area), Some(hat_state)) = (plan.areas.hat, plan.hat_state) {
+    if let (Some(hat_area), Some(hat_state)) = (plan.areas.hat, data.view_model.hat_state()) {
         HatRenderer::render(hat_area, hat_state, buf);
     }
 
     if let Some(btn_area) = plan.areas.buttons {
         ButtonGrid::render_with_scroll(
-            inputs.button_inputs(),
+            data.inputs.button_inputs(),
             btn_area,
             plan.scroll.button_row,
             buf,
