@@ -175,7 +175,9 @@ mod tests {
 
     fn multi_touch_state() -> TouchState {
         TouchState::from_parts(
-            TouchMode::MultiTouch { has_slot: true },
+            TouchMode::MultiTouch {
+                slots: super::super::types::MultiTouchSlots::Explicit,
+            },
             Some(2),
             TouchRange::fixed(0, 100),
             TouchRange::fixed(0, 100),
@@ -184,7 +186,9 @@ mod tests {
 
     fn pending_multi_touch_state() -> TouchState {
         TouchState::from_parts(
-            TouchMode::MultiTouch { has_slot: true },
+            TouchMode::MultiTouch {
+                slots: super::super::types::MultiTouchSlots::Explicit,
+            },
             None,
             TouchRange::Unknown,
             TouchRange::Unknown,

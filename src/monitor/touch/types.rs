@@ -48,20 +48,65 @@ impl TouchRange {
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum MultiTouchSlots {
+    ImplicitSingle,
+    Explicit,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum TouchMode {
     None,
-    MultiTouch { has_slot: bool },
+    MultiTouch { slots: MultiTouchSlots },
     SingleTouch { contact_key: Option<KeyCode> },
 }
 
-pub(super) fn touch_axes(mode: TouchMode) -> Option<(AbsoluteAxisCode, AbsoluteAxisCode)> {
-    match mode {
-        TouchMode::MultiTouch { .. } => Some((
-            AbsoluteAxisCode::ABS_MT_POSITION_X,
-            AbsoluteAxisCode::ABS_MT_POSITION_Y,
-        )),
-        TouchMode::SingleTouch { .. } => Some((AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y)),
-        TouchMode::None => None,
+impl TouchMode {
+    pub(super) fn axes(self) -> Option<(AbsoluteAxisCode, AbsoluteAxisCode)> {
+        match self {
+            Self::MultiTouch { .. } => Some((
+                AbsoluteAxisCode::ABS_MT_POSITION_X,
+                AbsoluteAxisCode::ABS_MT_POSITION_Y,
+            )),
+            Self::SingleTouch { .. } => Some((AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y)),
+            Self::None => None,
+        }
+    }
+
+    pub(super) fn is_touch_device(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    pub(super) fn uses_explicit_slots(self) -> bool {
+        matches!(
+            self,
+            Self::MultiTouch {
+                slots: MultiTouchSlots::Explicit
+            }
+        )
+    }
+
+    pub(super) fn slot_limit(self, detected_limit: Option<usize>) -> Option<usize> {
+        match self {
+            Self::None => Some(0),
+            Self::SingleTouch { .. }
+            | Self::MultiTouch {
+                slots: MultiTouchSlots::ImplicitSingle,
+            } => Some(1),
+            Self::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            } => detected_limit,
+        }
+    }
+
+    pub(super) fn slot_count(self, slot_limit: Option<usize>) -> usize {
+        match self {
+            Self::None => 0,
+            _ => slot_limit.unwrap_or(1).max(1),
+        }
+    }
+
+    pub(super) fn seeds_primary_tracking(self) -> bool {
+        matches!(self, Self::SingleTouch { contact_key: None })
     }
 }
 
@@ -91,7 +136,7 @@ pub(super) fn preferred_touch_contact_key(keys: &AttributeSetRef<KeyCode>) -> Op
 mod tests {
     use evdev::{AbsoluteAxisCode, AttributeSet, KeyCode};
 
-    use super::{TouchMode, TouchRange, preferred_touch_contact_key, touch_axes};
+    use super::{MultiTouchSlots, TouchMode, TouchRange, preferred_touch_contact_key};
 
     #[test]
     fn touch_range_observe_tracks_min_and_max() {
@@ -126,16 +171,37 @@ mod tests {
     #[test]
     fn touch_axes_match_touch_mode() {
         assert_eq!(
-            touch_axes(TouchMode::SingleTouch { contact_key: None }),
+            TouchMode::SingleTouch { contact_key: None }.axes(),
             Some((AbsoluteAxisCode::ABS_X, AbsoluteAxisCode::ABS_Y))
         );
         assert_eq!(
-            touch_axes(TouchMode::MultiTouch { has_slot: true }),
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            }
+            .axes(),
             Some((
                 AbsoluteAxisCode::ABS_MT_POSITION_X,
                 AbsoluteAxisCode::ABS_MT_POSITION_Y,
             ))
         );
-        assert_eq!(touch_axes(TouchMode::None), None);
+        assert_eq!(TouchMode::None.axes(), None);
+    }
+
+    #[test]
+    fn slot_limit_uses_explicit_slot_mode() {
+        assert_eq!(
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::ImplicitSingle,
+            }
+            .slot_limit(None),
+            Some(1)
+        );
+        assert_eq!(
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            }
+            .slot_limit(Some(4)),
+            Some(4)
+        );
     }
 }

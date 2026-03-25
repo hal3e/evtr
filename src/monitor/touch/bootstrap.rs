@@ -1,6 +1,6 @@
 use evdev::{Device, PropType};
 
-use super::types::{TouchMode, TouchRange, preferred_touch_contact_key, touch_axes};
+use super::types::{MultiTouchSlots, TouchMode, TouchRange, preferred_touch_contact_key};
 
 pub(super) struct TouchBootstrap {
     pub(super) mode: TouchMode,
@@ -11,55 +11,100 @@ pub(super) struct TouchBootstrap {
 }
 
 #[derive(Debug, Clone, Copy)]
-struct TouchCapabilities {
-    supports_mt_position: bool,
-    supports_slot: bool,
-    supports_abs_position: bool,
-    has_touch_properties: bool,
-    contact_key: Option<evdev::KeyCode>,
+enum TouchAxes {
+    None,
+    SingleTouch,
+    MultiTouch { slots: MultiTouchSlots },
 }
 
-impl TouchCapabilities {
+impl TouchAxes {
     fn from_device(device: &Device) -> Option<Self> {
         let axes = device.supported_absolute_axes()?;
-        let properties = device.properties();
 
+        if axes.contains(evdev::AbsoluteAxisCode::ABS_MT_POSITION_X)
+            && axes.contains(evdev::AbsoluteAxisCode::ABS_MT_POSITION_Y)
+        {
+            let slots = if axes.contains(evdev::AbsoluteAxisCode::ABS_MT_SLOT) {
+                MultiTouchSlots::Explicit
+            } else {
+                MultiTouchSlots::ImplicitSingle
+            };
+            return Some(Self::MultiTouch { slots });
+        }
+
+        if axes.contains(evdev::AbsoluteAxisCode::ABS_X)
+            && axes.contains(evdev::AbsoluteAxisCode::ABS_Y)
+        {
+            return Some(Self::SingleTouch);
+        }
+
+        Some(Self::None)
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+enum TouchHint {
+    None,
+    Property,
+    ContactKey(evdev::KeyCode),
+}
+
+impl TouchHint {
+    fn from_device(device: &Device) -> Self {
+        if let Some(contact_key) = device
+            .supported_keys()
+            .and_then(preferred_touch_contact_key)
+        {
+            return Self::ContactKey(contact_key);
+        }
+
+        if has_touch_properties(device.properties()) {
+            Self::Property
+        } else {
+            Self::None
+        }
+    }
+
+    fn indicates_touch(self) -> bool {
+        !matches!(self, Self::None)
+    }
+
+    fn contact_key(self) -> Option<evdev::KeyCode> {
+        match self {
+            Self::ContactKey(key) => Some(key),
+            Self::None | Self::Property => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TouchSignature {
+    axes: TouchAxes,
+    hint: TouchHint,
+}
+
+impl TouchSignature {
+    fn from_device(device: &Device) -> Option<Self> {
         Some(Self {
-            supports_mt_position: axes.contains(evdev::AbsoluteAxisCode::ABS_MT_POSITION_X)
-                && axes.contains(evdev::AbsoluteAxisCode::ABS_MT_POSITION_Y),
-            supports_slot: axes.contains(evdev::AbsoluteAxisCode::ABS_MT_SLOT),
-            supports_abs_position: axes.contains(evdev::AbsoluteAxisCode::ABS_X)
-                && axes.contains(evdev::AbsoluteAxisCode::ABS_Y),
-            has_touch_properties: properties.contains(PropType::DIRECT)
-                || properties.contains(PropType::BUTTONPAD)
-                || properties.contains(PropType::SEMI_MT)
-                || properties.contains(PropType::TOPBUTTONPAD),
-            contact_key: device
-                .supported_keys()
-                .and_then(preferred_touch_contact_key),
+            axes: TouchAxes::from_device(device)?,
+            hint: TouchHint::from_device(device),
         })
     }
 
     fn mode(self) -> TouchMode {
-        if self.supports_mt_position {
-            TouchMode::MultiTouch {
-                has_slot: self.supports_slot,
-            }
-        } else if self.supports_abs_position
-            && (self.has_touch_properties || self.contact_key.is_some())
-        {
-            TouchMode::SingleTouch {
-                contact_key: self.contact_key,
-            }
-        } else {
-            TouchMode::None
+        match self.axes {
+            TouchAxes::MultiTouch { slots } => TouchMode::MultiTouch { slots },
+            TouchAxes::SingleTouch if self.hint.indicates_touch() => TouchMode::SingleTouch {
+                contact_key: self.hint.contact_key(),
+            },
+            TouchAxes::None | TouchAxes::SingleTouch => TouchMode::None,
         }
     }
 }
 
 pub(super) fn inspect_touch_device(device: &Device) -> Option<TouchBootstrap> {
-    let capabilities = TouchCapabilities::from_device(device)?;
-    let mode = capabilities.mode();
+    let signature = TouchSignature::from_device(device)?;
+    let mode = signature.mode();
     if matches!(mode, TouchMode::None) {
         return None;
     }
@@ -79,7 +124,7 @@ pub(super) fn inspect_touch_device(device: &Device) -> Option<TouchBootstrap> {
     let mut y_range = TouchRange::Unknown;
     let mut slot_limit = None;
 
-    if let Some((x_axis, y_axis)) = touch_axes(mode) {
+    if let Some((x_axis, y_axis)) = mode.axes() {
         let axis_state = |axis: evdev::AbsoluteAxisCode| {
             abs_state
                 .as_ref()
@@ -92,7 +137,7 @@ pub(super) fn inspect_touch_device(device: &Device) -> Option<TouchBootstrap> {
         if let Some(info) = axis_state(y_axis) {
             y_range = TouchRange::fixed(info.minimum, info.maximum);
         }
-        if matches!(mode, TouchMode::MultiTouch { has_slot: true })
+        if mode.uses_explicit_slots()
             && let Some(info) = axis_state(evdev::AbsoluteAxisCode::ABS_MT_SLOT)
         {
             slot_limit = Some(info.maximum.max(0) as usize + 1);
@@ -115,40 +160,45 @@ pub(super) fn inspect_touch_device(device: &Device) -> Option<TouchBootstrap> {
     })
 }
 
+fn has_touch_properties(properties: &evdev::AttributeSetRef<PropType>) -> bool {
+    properties.contains(PropType::DIRECT)
+        || properties.contains(PropType::BUTTONPAD)
+        || properties.contains(PropType::SEMI_MT)
+        || properties.contains(PropType::TOPBUTTONPAD)
+}
+
 #[cfg(test)]
 mod tests {
     use evdev::KeyCode;
 
-    use super::TouchCapabilities;
-    use crate::monitor::touch::types::TouchMode;
+    use super::{TouchAxes, TouchHint, TouchSignature};
+    use crate::monitor::touch::types::{MultiTouchSlots, TouchMode};
 
     #[test]
-    fn touch_capabilities_prefer_multi_touch_when_available() {
-        let capabilities = TouchCapabilities {
-            supports_mt_position: true,
-            supports_slot: true,
-            supports_abs_position: true,
-            has_touch_properties: true,
-            contact_key: Some(KeyCode::BTN_TOUCH),
+    fn touch_signature_prefers_multi_touch_when_available() {
+        let signature = TouchSignature {
+            axes: TouchAxes::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            },
+            hint: TouchHint::ContactKey(KeyCode::BTN_TOUCH),
         };
 
         assert_eq!(
-            capabilities.mode(),
-            TouchMode::MultiTouch { has_slot: true }
+            signature.mode(),
+            TouchMode::MultiTouch {
+                slots: MultiTouchSlots::Explicit,
+            }
         );
     }
 
     #[test]
-    fn touch_capabilities_require_touch_hint_for_single_touch() {
-        let without_hint = TouchCapabilities {
-            supports_mt_position: false,
-            supports_slot: false,
-            supports_abs_position: true,
-            has_touch_properties: false,
-            contact_key: None,
+    fn touch_signature_requires_touch_hint_for_single_touch() {
+        let without_hint = TouchSignature {
+            axes: TouchAxes::SingleTouch,
+            hint: TouchHint::None,
         };
-        let with_key = TouchCapabilities {
-            contact_key: Some(KeyCode::BTN_TOUCH),
+        let with_key = TouchSignature {
+            hint: TouchHint::ContactKey(KeyCode::BTN_TOUCH),
             ..without_hint
         };
 

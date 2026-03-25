@@ -51,8 +51,8 @@ impl TouchState {
         x_range: TouchRange,
         y_range: TouchRange,
     ) -> Self {
-        let slot_limit = slot_limit_for_mode(mode, slot_limit);
-        let mut slots = vec![TouchSlot::default(); slots_len_for_mode(mode, slot_limit)];
+        let slot_limit = mode.slot_limit(slot_limit);
+        let mut slots = vec![TouchSlot::default(); mode.slot_count(slot_limit)];
         initialize_slots(&mut slots, mode);
 
         Self {
@@ -70,7 +70,7 @@ impl TouchState {
     }
 
     pub(super) fn is_touch_device(&self) -> bool {
-        !matches!(self.mode, TouchMode::None)
+        self.mode.is_touch_device()
     }
 
     pub(super) fn x_range(&self) -> Option<(i32, i32)> {
@@ -86,23 +86,8 @@ impl TouchState {
     }
 }
 
-fn slot_limit_for_mode(mode: TouchMode, slot_limit: Option<usize>) -> Option<usize> {
-    match mode {
-        TouchMode::None => Some(0),
-        TouchMode::SingleTouch { .. } | TouchMode::MultiTouch { has_slot: false } => Some(1),
-        TouchMode::MultiTouch { has_slot: true } => slot_limit,
-    }
-}
-
-fn slots_len_for_mode(mode: TouchMode, slot_limit: Option<usize>) -> usize {
-    match mode {
-        TouchMode::None => 0,
-        _ => slot_limit.unwrap_or(1).max(1),
-    }
-}
-
 fn initialize_slots(slots: &mut [TouchSlot], mode: TouchMode) {
-    if matches!(mode, TouchMode::SingleTouch { contact_key: None }) && !slots.is_empty() {
+    if mode.seeds_primary_tracking() && !slots.is_empty() {
         slots[0].tracking_id = Some(0);
     }
 }
