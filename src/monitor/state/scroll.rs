@@ -1,4 +1,4 @@
-use crate::monitor::plan::RenderPlan;
+use crate::monitor::plan::NavigationContext;
 
 use super::{Focus, MonitorState};
 
@@ -24,10 +24,10 @@ impl ScrollCursor {
         }
     }
 
-    fn from_plan(plan: &RenderPlan) -> Self {
+    fn from_navigation(navigation: NavigationContext) -> Self {
         Self {
-            axis: plan.scroll.axis,
-            button_row: plan.scroll.button_row,
+            axis: navigation.scroll().axis,
+            button_row: navigation.scroll().button_row,
         }
     }
 
@@ -83,12 +83,13 @@ impl ScrollCursor {
 }
 
 impl ScrollLimits {
-    fn from_plan(plan: &RenderPlan) -> Self {
+    fn from_navigation(navigation: NavigationContext) -> Self {
+        let scroll_bounds = navigation.scroll_bounds();
         Self {
-            axes_max: plan.scroll_bounds.axes_max,
-            button_row_max_start: plan.scroll_bounds.button_row_max_start,
-            axes_overflow: plan.scroll_bounds.axes_overflow,
-            buttons_overflow: plan.scroll_bounds.buttons_overflow,
+            axes_max: scroll_bounds.axes_max,
+            button_row_max_start: scroll_bounds.button_row_max_start,
+            axes_overflow: scroll_bounds.axes_overflow,
+            buttons_overflow: scroll_bounds.buttons_overflow,
         }
     }
 }
@@ -102,40 +103,50 @@ impl MonitorState {
         self.button_row_scroll
     }
 
-    pub(crate) fn sync_from_plan(&mut self, plan: &RenderPlan) {
-        self.focus = plan.focus;
-        ScrollCursor::from_plan(plan).apply(self);
+    pub(crate) fn sync_from_navigation(&mut self, navigation: NavigationContext) {
+        self.focus = navigation.focus();
+        ScrollCursor::from_navigation(navigation).apply(self);
     }
 
-    pub(crate) fn scroll_by(&mut self, direction: i32, plan: &RenderPlan) {
+    pub(crate) fn scroll_by(&mut self, direction: i32, navigation: NavigationContext) {
         let cursor = ScrollCursor::from_state(self).step(
-            plan.focus,
+            navigation.focus(),
             direction,
-            ScrollLimits::from_plan(plan),
+            ScrollLimits::from_navigation(navigation),
         );
         cursor.apply(self);
     }
 
-    pub(crate) fn scroll_page(&mut self, direction: i32, plan: &RenderPlan, steps: usize) {
+    pub(crate) fn scroll_page(
+        &mut self,
+        direction: i32,
+        navigation: NavigationContext,
+        steps: usize,
+    ) {
         if direction == 0 {
             return;
         }
 
-        let limits = ScrollLimits::from_plan(plan);
+        let limits = ScrollLimits::from_navigation(navigation);
         let mut cursor = ScrollCursor::from_state(self);
         for _ in 0..steps {
-            cursor = cursor.step(plan.focus, direction, limits);
+            cursor = cursor.step(navigation.focus(), direction, limits);
         }
         cursor.apply(self);
     }
 
-    pub(crate) fn scroll_home(&mut self, plan: &RenderPlan) {
-        ScrollCursor::from_state(self).home(plan.focus).apply(self);
+    pub(crate) fn scroll_home(&mut self, navigation: NavigationContext) {
+        ScrollCursor::from_state(self)
+            .home(navigation.focus())
+            .apply(self);
     }
 
-    pub(crate) fn scroll_end(&mut self, plan: &RenderPlan) {
+    pub(crate) fn scroll_end(&mut self, navigation: NavigationContext) {
         ScrollCursor::from_state(self)
-            .end(plan.focus, ScrollLimits::from_plan(plan))
+            .end(
+                navigation.focus(),
+                ScrollLimits::from_navigation(navigation),
+            )
             .apply(self);
     }
 }

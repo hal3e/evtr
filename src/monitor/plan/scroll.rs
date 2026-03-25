@@ -7,11 +7,13 @@ use crate::monitor::{
     state::MonitorState,
 };
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScrollState {
     pub(crate) axis: usize,
     pub(crate) button_row: usize,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) struct ScrollBounds {
     pub(crate) axes_max: usize,
     abs_max_start: usize,

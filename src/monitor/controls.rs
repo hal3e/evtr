@@ -3,7 +3,7 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use crate::monitor::{
     MonitorExit, config,
     model::InputCollection,
-    plan::RenderPlan,
+    plan::NavigationContext,
     state::{ActivePopup, MonitorState},
 };
 
@@ -66,7 +66,7 @@ pub(crate) fn apply_command(
     command: Command,
     state: &mut MonitorState,
     inputs: &mut InputCollection,
-    plan: &RenderPlan,
+    navigation: NavigationContext,
 ) -> Option<MonitorExit> {
     match command {
         Command::BackToSelector => Some(MonitorExit::BackToSelector),
@@ -76,27 +76,27 @@ pub(crate) fn apply_command(
             None
         }
         Command::Scroll(dir) => {
-            state.scroll_by(dir, plan);
+            state.scroll_by(dir, navigation);
             None
         }
         Command::Page(dir) => {
-            state.scroll_page(dir, plan, config::PAGE_SCROLL_STEPS);
+            state.scroll_page(dir, navigation, config::PAGE_SCROLL_STEPS);
             None
         }
         Command::Home => {
-            state.scroll_home(plan);
+            state.scroll_home(navigation);
             None
         }
         Command::End => {
-            state.scroll_end(plan);
+            state.scroll_end(navigation);
             None
         }
         Command::FocusNext => {
-            state.focus_next(plan);
+            state.focus_next(navigation);
             None
         }
         Command::FocusPrev => {
-            state.focus_prev(plan);
+            state.focus_prev(navigation);
             None
         }
         Command::ToggleInvertY => {

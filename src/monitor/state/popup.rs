@@ -1,4 +1,4 @@
-use crate::monitor::plan::RenderPlan;
+use crate::monitor::plan::NavigationContext;
 
 use super::{ActivePopup, Focus, MonitorState};
 
@@ -11,12 +11,12 @@ impl MonitorState {
         self.focus
     }
 
-    pub(crate) fn focus_next(&mut self, plan: &RenderPlan) {
-        self.focus = next_focus(plan.focus, plan.focusable());
+    pub(crate) fn focus_next(&mut self, navigation: NavigationContext) {
+        self.focus = next_focus(navigation.focus(), navigation.focusable());
     }
 
-    pub(crate) fn focus_prev(&mut self, plan: &RenderPlan) {
-        self.focus_next(plan);
+    pub(crate) fn focus_prev(&mut self, navigation: NavigationContext) {
+        self.focus_next(navigation);
     }
 
     pub(crate) fn toggle_info(&mut self) {

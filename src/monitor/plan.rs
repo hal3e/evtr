@@ -53,9 +53,44 @@ pub(crate) struct RenderPlan {
     pub(crate) hat_state: Option<HatState>,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct NavigationContext {
+    focus: Focus,
+    scroll: ScrollState,
+    scroll_bounds: ScrollBounds,
+    focusable: bool,
+}
+
+impl NavigationContext {
+    pub(crate) fn focus(self) -> Focus {
+        self.focus
+    }
+
+    pub(crate) fn scroll(self) -> ScrollState {
+        self.scroll
+    }
+
+    pub(crate) fn scroll_bounds(self) -> ScrollBounds {
+        self.scroll_bounds
+    }
+
+    pub(crate) fn focusable(self) -> bool {
+        self.focusable
+    }
+}
+
 impl RenderPlan {
     pub(crate) fn focusable(&self) -> bool {
         self.boxes.axes.is_some() && self.boxes.buttons.is_some()
+    }
+
+    pub(crate) fn navigation_context(&self) -> NavigationContext {
+        NavigationContext {
+            focus: self.focus,
+            scroll: self.scroll,
+            scroll_bounds: self.scroll_bounds,
+            focusable: self.focusable(),
+        }
     }
 
     pub(crate) fn axis_offsets(&self) -> (usize, usize) {
@@ -110,10 +145,64 @@ pub(crate) fn build_render_plan(
 
 #[cfg(test)]
 mod tests {
-    use super::Counts;
+    use super::{Counts, NavigationContext, RenderPlan};
+    use crate::monitor::{
+        plan::{
+            areas::{PlannedAreas, PlannedBoxes},
+            scroll::{ScrollBounds, ScrollState},
+        },
+        render::joystick::JoystickState,
+        state::Focus,
+    };
 
     #[test]
     fn counts_total_axes_tracks_absolute_and_relative_inputs() {
         assert_eq!(Counts::new(2, 3, 4).total_axes(), 5);
+    }
+
+    #[test]
+    fn navigation_context_captures_navigation_fields_only() {
+        let scroll_bounds = ScrollBounds::from_capacities(Counts::new(4, 5, 6), 2, 3, 4);
+        let plan = RenderPlan {
+            focus: Focus::Buttons,
+            scroll: ScrollState {
+                axis: 2,
+                button_row: 3,
+            },
+            effective_counts: Counts::new(4, 5, 6),
+            scroll_bounds,
+            boxes: PlannedBoxes {
+                joystick: None,
+                hat: None,
+                axes: Some(ratatui::layout::Rect::default()),
+                touch: None,
+                buttons: Some(ratatui::layout::Rect::default()),
+            },
+            areas: PlannedAreas {
+                joystick: None,
+                hat: None,
+                abs: None,
+                rel: None,
+                touch: None,
+                buttons: None,
+            },
+            joystick: JoystickState::default(),
+            hat_state: None,
+        };
+
+        let navigation = plan.navigation_context();
+
+        assert_eq!(
+            navigation,
+            NavigationContext {
+                focus: Focus::Buttons,
+                scroll: ScrollState {
+                    axis: 2,
+                    button_row: 3,
+                },
+                scroll_bounds,
+                focusable: true,
+            }
+        );
     }
 }

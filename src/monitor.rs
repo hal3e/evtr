@@ -124,11 +124,12 @@ impl DeviceMonitor {
                                 .map(Rect::from)
                                 .map_err(|err| ErrorArea::Monitor.io("terminal size", err))?;
                             let plan = monitor.sync_render_plan(area);
+                            let navigation = plan.navigation_context();
                             if let Some(exit) = apply_command(
                                 command_for(key, monitor.state.active_popup()),
                                 &mut monitor.state,
                                 &mut monitor.inputs,
-                                &plan,
+                                navigation,
                             ) {
                                 return Ok(exit);
                             }
@@ -169,7 +170,7 @@ impl DeviceMonitor {
 
     fn sync_render_plan(&mut self, area: Rect) -> RenderPlan {
         let plan = build_render_plan(area, &self.state, &self.inputs, &self.touch);
-        self.state.sync_from_plan(&plan);
+        self.state.sync_from_navigation(plan.navigation_context());
         plan
     }
 }
