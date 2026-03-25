@@ -5,7 +5,11 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
-use super::{commands::SelectorMode, devices::DeviceCatalog, state::SelectorState};
+use super::{
+    commands::{SelectorMode, help_lines},
+    devices::DeviceCatalog,
+    state::SelectorState,
+};
 use crate::ui::{
     popup::{error_popup, help_popup, render_popup},
     theme, widgets,
@@ -22,15 +26,6 @@ const POPUP_MAX_WIDTH: u16 = 80;
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
-const HELP_LINES: &[&str] = &[
-    "Move: Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End",
-    "Select: Enter",
-    "Exit: Esc or Ctrl-C",
-    "Search: type to filter, Backspace, Ctrl-U clear",
-    "Refresh: Ctrl-R",
-    "Help: ? (press ? or Esc to close)",
-];
-
 pub(crate) fn render_selector(
     state: &SelectorState,
     devices: &DeviceCatalog,
@@ -126,7 +121,8 @@ fn render_help_popup(state: &SelectorState, area: Rect, buf: &mut Buffer) {
         HELP_POPUP_MIN_HEIGHT,
         HELP_POPUP_MAX_WIDTH,
     );
-    render_popup(area, buf, &popup, HELP_LINES);
+    let lines = help_lines();
+    render_popup(area, buf, &popup, &lines);
 }
 
 fn empty_state_message(search_query: &str) -> &'static str {

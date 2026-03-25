@@ -15,6 +15,7 @@ use super::{
 };
 use crate::monitor::{
     config,
+    controls::help_lines,
     layout::main_layout,
     model::InputCollection,
     plan::RenderPlan,
@@ -26,18 +27,6 @@ use crate::monitor::{
 const HELP_POPUP_MIN_WIDTH: u16 = 30;
 const HELP_POPUP_MIN_HEIGHT: u16 = 6;
 const HELP_POPUP_MAX_WIDTH: u16 = 80;
-const HELP_POPUP_LINES: &[&str] = &[
-    "Scroll: Up/Down or j/k, PageUp/PageDown",
-    "Jump: Home/End or g/G",
-    "Reset: r (relative axes)",
-    "Info: i (press i or Esc to close)",
-    "Invert Y: y",
-    "Focus: Shift+J/Shift+K (when axes and buttons show)",
-    "Back: Esc (when no popup is open)",
-    "Exit app: Ctrl-C",
-    "Help: ? (press ? or Esc to close)",
-];
-
 pub(crate) struct FrameData<'a> {
     identifier: &'a str,
     state: &'a MonitorState,
@@ -179,7 +168,8 @@ fn render_help_popup(area: Rect, buf: &mut Buffer) {
         HELP_POPUP_MIN_HEIGHT,
         HELP_POPUP_MAX_WIDTH,
     );
-    render_popup(area, buf, &popup, HELP_POPUP_LINES);
+    let lines = help_lines();
+    render_popup(area, buf, &popup, &lines);
 }
 
 fn joystick_title(count: usize) -> &'static str {
