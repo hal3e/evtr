@@ -4,9 +4,8 @@ mod update;
 
 use evdev::Device;
 
-use crate::monitor::ComponentBootstrap;
-
 use self::{
+    super::bootstrap::Bootstrapped,
     bootstrap::inspect_touch_device,
     types::{TouchMode, TouchRange, TouchSlot},
 };
@@ -21,20 +20,20 @@ pub(crate) struct TouchState {
 }
 
 impl TouchState {
-    pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
+    pub(crate) fn from_device(device: &Device) -> Bootstrapped<Self> {
         let Some(bootstrap) = inspect_touch_device(device) else {
-            return ComponentBootstrap::new(Self::disabled());
+            return Bootstrapped::new(Self::disabled());
         };
 
-        ComponentBootstrap {
-            value: Self::from_parts(
+        Bootstrapped::with_warnings(
+            Self::from_parts(
                 bootstrap.mode,
                 bootstrap.slot_limit,
                 bootstrap.x_range,
                 bootstrap.y_range,
             ),
-            startup_warnings: bootstrap.startup_warnings,
-        }
+            bootstrap.startup_warnings,
+        )
     }
 
     fn disabled() -> Self {

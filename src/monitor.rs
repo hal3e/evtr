@@ -1,3 +1,4 @@
+mod bootstrap;
 mod config;
 mod controls;
 mod layout;
@@ -17,11 +18,12 @@ use ratatui::{DefaultTerminal, buffer::Buffer, layout::Rect};
 use tokio::select;
 
 use self::{
+    bootstrap::MonitorBootstrap,
     controls::{apply_command, command_for},
     model::InputCollection,
-    plan::{Counts, RenderPlan, build_render_plan},
+    plan::{RenderPlan, build_render_plan},
     render::frame::{FrameData, render_frame},
-    state::{MonitorState, build_device_info_lines},
+    state::MonitorState,
     touch::TouchState,
     view_model::MonitorViewModel,
 };
@@ -35,41 +37,6 @@ pub(crate) enum MonitorExit {
     ExitApp,
 }
 
-pub(super) struct ComponentBootstrap<T> {
-    pub(super) value: T,
-    pub(super) startup_warnings: Vec<String>,
-}
-
-impl<T> ComponentBootstrap<T> {
-    fn new(value: T) -> Self {
-        Self {
-            value,
-            startup_warnings: Vec::new(),
-        }
-    }
-}
-
-struct DeviceBootstrap {
-    inputs: InputCollection,
-    touch: TouchState,
-    startup_warnings: Vec<String>,
-}
-
-impl DeviceBootstrap {
-    fn from_device(device: &evdev::Device) -> Self {
-        let inputs = InputCollection::from_device(device);
-        let touch = TouchState::from_device(device);
-        let mut startup_warnings = inputs.startup_warnings;
-        startup_warnings.extend(touch.startup_warnings);
-
-        Self {
-            inputs: inputs.value,
-            touch: touch.value,
-            startup_warnings,
-        }
-    }
-}
-
 pub struct DeviceMonitor {
     device_stream: evdev::EventStream,
     inputs: InputCollection,
@@ -80,28 +47,21 @@ pub struct DeviceMonitor {
 
 impl DeviceMonitor {
     fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
-        let bootstrap = DeviceBootstrap::from_device(&device);
-        let counts = Counts::new(
-            bootstrap.inputs.absolute_inputs().len(),
-            bootstrap.inputs.relative_inputs().len(),
-            bootstrap.inputs.button_inputs().len(),
-        );
-        let info_lines = build_device_info_lines(
-            device.driver_version(),
-            device.input_id(),
-            device.physical_path(),
-            &bootstrap.startup_warnings,
-        );
+        let MonitorBootstrap {
+            inputs,
+            touch,
+            state,
+        } = MonitorBootstrap::from_device(&device);
         let device_stream = device.into_event_stream().map_err(|err| {
             ErrorArea::Monitor.evdev(format!("open device stream ({identifier})"), err)
         })?;
 
         Ok(Self {
             device_stream,
-            inputs: bootstrap.inputs,
+            inputs,
             identifier,
-            touch: bootstrap.touch,
-            state: MonitorState::new(counts, info_lines),
+            touch,
+            state,
         })
     }
 

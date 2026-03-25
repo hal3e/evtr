@@ -61,28 +61,3 @@ impl MonitorState {
         self.joystick_invert_y = !self.joystick_invert_y;
     }
 }
-
-pub(crate) fn build_device_info_lines(
-    driver_version: (u8, u8, u8),
-    input_id: evdev::InputId,
-    phys: Option<&str>,
-    startup_warnings: &[String],
-) -> Vec<String> {
-    let (major, minor, patch) = driver_version;
-    let bus = input_id.bus_type().0;
-    let vendor = input_id.vendor();
-    let product = input_id.product();
-    let version = input_id.version();
-    let phys = phys.unwrap_or("n/a");
-    let mut lines = vec![
-        format!("Input driver version: {major}.{minor}.{patch}"),
-        format!(
-            "Input device ID: bus {bus:#x}, vendor {vendor:#x}, product {product:#x}, version {version:#x}"
-        ),
-        format!("Input device phys: {phys}"),
-    ];
-    for warning in startup_warnings {
-        lines.push(format!("Startup warning: {warning}"));
-    }
-    lines
-}

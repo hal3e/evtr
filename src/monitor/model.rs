@@ -5,10 +5,9 @@ mod types;
 
 use evdev::{AbsoluteAxisCode, Device, InputEvent};
 
-use crate::monitor::ComponentBootstrap;
-
 pub(crate) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
 use self::{
+    super::bootstrap::Bootstrapped,
     bootstrap::collect_device_inputs,
     buckets::{InputBuckets, InputEntries},
     index::EventIndex,
@@ -20,13 +19,13 @@ pub(crate) struct InputCollection {
 }
 
 impl InputCollection {
-    pub(crate) fn from_device(device: &Device) -> ComponentBootstrap<Self> {
+    pub(crate) fn from_device(device: &Device) -> Bootstrapped<Self> {
         let entries = collect_device_inputs(device);
 
-        ComponentBootstrap {
-            value: Self::from_entries(entries.absolute, entries.relative, entries.buttons),
-            startup_warnings: entries.startup_warnings,
-        }
+        Bootstrapped::with_warnings(
+            Self::from_entries(entries.absolute, entries.relative, entries.buttons),
+            entries.startup_warnings,
+        )
     }
 
     pub(crate) fn handle_event(&mut self, event: &InputEvent) {
