@@ -1,9 +1,13 @@
 mod commands;
+mod devices;
 mod discovery;
 mod state;
 mod view;
 
-use std::{io, path::Path};
+use std::{
+    io,
+    path::{Path, PathBuf},
+};
 
 use crossterm::event::{Event, EventStream as TermEventStream, KeyEvent, KeyEventKind};
 use evdev::Device;
@@ -12,6 +16,7 @@ use ratatui::DefaultTerminal;
 
 use self::{
     commands::command_for,
+    devices::DeviceCatalog,
     discovery::discover_devices,
     state::{SelectorState, SelectorTransition},
     view::render_selector,
@@ -21,37 +26,49 @@ use crate::{
     evtr::State,
 };
 
+pub(crate) use self::devices::device_label;
+
 #[derive(Debug)]
 pub struct DeviceInfo {
     pub device: Device,
-    pub identifier: String,
+    pub name: String,
+    pub path: PathBuf,
 }
 
 pub struct DeviceSelector {
+    devices: DeviceCatalog,
     state: SelectorState,
 }
 
 impl DeviceSelector {
     fn new(error_message: Option<String>) -> Self {
+        let (devices, discovery_error) = Self::load_devices();
+
         Self {
-            state: SelectorState::new(discover_devices(Self::open_device), error_message),
+            state: SelectorState::new(devices.labels(), error_message.or(discovery_error)),
+            devices,
         }
     }
 
     fn open_device(path: &Path) -> io::Result<DeviceInfo> {
         let device = Device::open(path)?;
         let name = device.name().unwrap_or("Unknown Device").to_string();
-        let path = path.to_string_lossy().to_string();
 
         Ok(DeviceInfo {
             device,
-            identifier: format!("{name} ({path})"),
+            name,
+            path: path.to_path_buf(),
         })
     }
 
+    fn load_devices() -> (DeviceCatalog, Option<String>) {
+        DeviceCatalog::from_discovery(discover_devices(Self::open_device))
+    }
+
     fn refresh_devices(&mut self) {
-        self.state
-            .apply_discovery(discover_devices(Self::open_device));
+        let (devices, error_message) = Self::load_devices();
+        self.state.apply_discovery(devices.labels(), error_message);
+        self.devices = devices;
     }
 
     pub async fn run(
@@ -64,7 +81,12 @@ impl DeviceSelector {
         loop {
             terminal
                 .draw(|frame| {
-                    render_selector(&selector.state, frame.area(), frame.buffer_mut());
+                    render_selector(
+                        &selector.state,
+                        &selector.devices,
+                        frame.area(),
+                        frame.buffer_mut(),
+                    );
                 })
                 .map_err(|err| ErrorArea::Selector.io("selector draw", err))?;
 
@@ -87,7 +109,9 @@ impl DeviceSelector {
 
     fn handle_key_press(&mut self, key: KeyEvent) -> Option<State> {
         let mode = self.state.mode();
-        let transition = self.state.reduce(command_for(key, mode));
+        let transition = self
+            .state
+            .reduce(command_for(key, mode), self.devices.labels());
         self.handle_transition(transition)
     }
 
@@ -100,8 +124,8 @@ impl DeviceSelector {
                 None
             }
             SelectorTransition::OpenSelection => self
-                .state
-                .take_selected_device()
+                .devices
+                .take_selected(self.state.selected_device_index())
                 .map(|device| State::Monitor(Box::new(device))),
         }
     }

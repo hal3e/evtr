@@ -29,7 +29,7 @@ use self::{
 };
 use crate::{
     error::{ErrorArea, Result},
-    selector::DeviceInfo,
+    selector::{DeviceInfo, device_label},
 };
 
 pub(crate) enum MonitorExit {
@@ -46,7 +46,9 @@ pub struct DeviceMonitor {
 }
 
 impl DeviceMonitor {
-    fn new(DeviceInfo { device, identifier }: DeviceInfo) -> Result<Self> {
+    fn new(device_info: DeviceInfo) -> Result<Self> {
+        let identifier = device_label(&device_info);
+        let DeviceInfo { device, .. } = device_info;
         let MonitorBootstrap {
             inputs,
             touch,

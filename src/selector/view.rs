@@ -5,7 +5,7 @@ use ratatui::{
     widgets::{List, ListItem, ListState, Paragraph, Widget, Wrap},
 };
 
-use super::{commands::SelectorMode, state::SelectorState};
+use super::{commands::SelectorMode, devices::DeviceCatalog, state::SelectorState};
 use crate::ui::{
     popup::{error_popup, help_popup, render_popup},
     theme, widgets,
@@ -31,7 +31,12 @@ const HELP_LINES: &[&str] = &[
     "Help: ? (press ? or Esc to close)",
 ];
 
-pub(crate) fn render_selector(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+pub(crate) fn render_selector(
+    state: &SelectorState,
+    devices: &DeviceCatalog,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     use Constraint::{Length, Min, Percentage};
 
     let [_left_margin, content_area, _right_margin] = Layout::horizontal([
@@ -49,7 +54,7 @@ pub(crate) fn render_selector(state: &SelectorState, area: Rect, buf: &mut Buffe
     .areas(content_area);
 
     render_search_box(state, search_area, buf);
-    render_device_list(state, list_area, buf);
+    render_device_list(state, devices, list_area, buf);
     render_help_popup(state, area, buf);
     render_error_popup(state, area, buf);
 }
@@ -62,7 +67,12 @@ fn render_search_box(state: &SelectorState, area: Rect, buf: &mut Buffer) {
         .render(area, buf);
 }
 
-fn render_device_list(state: &SelectorState, area: Rect, buf: &mut Buffer) {
+fn render_device_list(
+    state: &SelectorState,
+    devices: &DeviceCatalog,
+    area: Rect,
+    buf: &mut Buffer,
+) {
     if state.filtered_indexes().is_empty() {
         Paragraph::new(empty_state_message(state.search_query()))
             .block(widgets::accent_titled_block(" Devices "))
@@ -74,8 +84,8 @@ fn render_device_list(state: &SelectorState, area: Rect, buf: &mut Buffer) {
     }
 
     let items = state.filtered_indexes().iter().filter_map(|&device_index| {
-        state
-            .device_identifier(device_index)
+        devices
+            .label(device_index)
             .map(|identifier| ListItem::new(identifier.to_string()))
     });
 
