@@ -12,6 +12,7 @@ pub(crate) fn help_popup(
     Popup::new(title)
         .min_size(min_width, min_height)
         .max_width(max_width)
+        .max_height(u16::MAX)
         .text_style(theme::style_text())
         .border_style(theme::style_panel_focused())
         .text_alignment(Alignment::Left)

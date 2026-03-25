@@ -52,6 +52,11 @@ impl<'a> Popup<'a> {
         self
     }
 
+    pub(crate) fn max_height(mut self, height: u16) -> Self {
+        self.max_height = Some(height);
+        self
+    }
+
     pub(crate) fn text_style(mut self, style: Style) -> Self {
         self.text_style = style;
         self
@@ -105,4 +110,69 @@ pub(crate) fn render_popup<S: AsRef<str>>(
             popup.title_alignment,
         ))
         .render(popup_area, buf);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{
+        buffer::Buffer,
+        layout::{Alignment, Rect},
+        style::{Modifier, Style},
+        widgets::Wrap,
+    };
+
+    use super::{Popup, render_popup};
+
+    fn buffer_text(buf: &Buffer) -> String {
+        buf.content().iter().map(|cell| cell.symbol()).collect()
+    }
+
+    #[test]
+    fn popup_builder_setters_update_the_expected_fields() {
+        let popup = Popup::new("Help")
+            .min_size(10, 4)
+            .max_width(30)
+            .max_height(12)
+            .text_style(Style::default().add_modifier(Modifier::BOLD))
+            .border_style(Style::default().add_modifier(Modifier::ITALIC))
+            .text_alignment(Alignment::Center)
+            .title_alignment(Alignment::Right)
+            .wrap(Wrap { trim: true });
+
+        assert_eq!(popup.title, "Help");
+        assert_eq!(popup.min_width, 10);
+        assert_eq!(popup.min_height, 4);
+        assert_eq!(popup.max_width, Some(30));
+        assert_eq!(popup.max_height, Some(12));
+        assert_eq!(popup.text_alignment, Alignment::Center);
+        assert_eq!(popup.title_alignment, Alignment::Right);
+        assert!(popup.text_style.add_modifier.contains(Modifier::BOLD));
+        assert!(popup.border_style.add_modifier.contains(Modifier::ITALIC));
+        assert!(popup.wrap.trim);
+    }
+
+    #[test]
+    fn render_popup_is_a_no_op_when_the_area_cannot_fit_the_popup() {
+        let area = Rect::new(0, 0, 4, 2);
+        let mut buf = Buffer::empty(area);
+        let popup = Popup::new("Help").min_size(10, 4);
+
+        render_popup(area, &mut buf, &popup, &["line 1"]);
+
+        assert_eq!(buffer_text(&buf).trim(), "");
+    }
+
+    #[test]
+    fn render_popup_writes_title_and_joined_body_lines() {
+        let area = Rect::new(0, 0, 24, 8);
+        let mut buf = Buffer::empty(area);
+        let popup = Popup::new("Info").min_size(10, 4).max_width(20);
+
+        render_popup(area, &mut buf, &popup, &["first line", "second line"]);
+
+        let text = buffer_text(&buf);
+        assert!(text.contains("Info"));
+        assert!(text.contains("first line"));
+        assert!(text.contains("second line"));
+    }
 }

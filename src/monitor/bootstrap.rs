@@ -120,4 +120,28 @@ mod tests {
 
         assert_eq!(lines[2], "Input device phys: n/a");
     }
+
+    #[test]
+    fn device_info_lines_append_multiple_warnings_in_order_after_metadata() {
+        let lines = device_info_lines(
+            (2, 3, 4),
+            InputId::new(BusType::BUS_USB, 0x1, 0x2, 0x3),
+            Some("usb-2/input0"),
+            &[
+                "touch bounds unavailable".to_string(),
+                "slot limit inferred".to_string(),
+            ],
+        );
+
+        assert_eq!(
+            lines,
+            vec![
+                "Input driver version: 2.3.4".to_string(),
+                "Input device ID: bus 0x3, vendor 0x1, product 0x2, version 0x3".to_string(),
+                "Input device phys: usb-2/input0".to_string(),
+                "Startup warning: touch bounds unavailable".to_string(),
+                "Startup warning: slot limit inferred".to_string(),
+            ]
+        );
+    }
 }

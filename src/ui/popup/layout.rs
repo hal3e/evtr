@@ -93,4 +93,32 @@ mod tests {
             Some(Rect::new(2, 2, 5, 3))
         );
     }
+
+    #[test]
+    fn popup_area_returns_none_when_available_area_is_smaller_than_minimum() {
+        let lines = ["abc"];
+        let popup = popup().min_size(10, 4);
+
+        assert_eq!(popup_area(Rect::new(0, 0, 9, 7), &popup, &lines), None);
+        assert_eq!(popup_area(Rect::new(0, 0, 12, 3), &popup, &lines), None);
+    }
+
+    #[test]
+    fn popup_area_clamps_to_maximum_width_and_height() {
+        let lines = ["12345678901234567890", "second line"];
+        let popup = popup().max_width(8).max_height(4);
+
+        assert_eq!(
+            popup_area(Rect::new(0, 0, 30, 10), &popup, &lines),
+            Some(Rect::new(11, 3, 8, 4))
+        );
+    }
+
+    #[test]
+    fn popup_area_returns_none_when_clamped_max_size_is_zero() {
+        let lines = ["abc"];
+        let popup = popup().max_width(0).max_height(0);
+
+        assert_eq!(popup_area(Rect::new(0, 0, 10, 10), &popup, &lines), None);
+    }
 }
