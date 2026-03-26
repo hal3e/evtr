@@ -7,7 +7,6 @@ use ratatui::{
 use crate::monitor::{
     config,
     model::{DeviceInput, InputSlice},
-    ui,
 };
 use crate::ui::text;
 
@@ -72,7 +71,7 @@ impl AxisRenderer {
         let item_height = bar_height + config::AXIS_GAP;
 
         let max_visible = (area.height / item_height) as usize;
-        let (start, count) = ui::visible_window(num_items, scroll_offset, max_visible);
+        let (start, count) = visible_window(num_items, scroll_offset, max_visible);
         if let Some(window) = inputs.get(start..start + count) {
             for (i, input) in window.iter().enumerate() {
                 let y = area.y + (i as u16 * item_height);
@@ -113,11 +112,22 @@ impl AxisRenderer {
     }
 }
 
+fn visible_window(total: usize, offset: usize, capacity: usize) -> (usize, usize) {
+    if total == 0 || capacity == 0 {
+        return (0, 0);
+    }
+
+    let max_start = total.saturating_sub(capacity);
+    let start = offset.min(max_start);
+    let count = capacity.min(total - start);
+    (start, count)
+}
+
 #[cfg(test)]
 mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
 
-    use super::AxisRenderer;
+    use super::{AxisRenderer, visible_window};
     use crate::monitor::{
         config,
         model::{AbsoluteState, DeviceInput, InputKind},
@@ -194,5 +204,16 @@ mod tests {
         AxisRenderer::render_axis_item(&absolute_input("abs_x", 25), area, &mut buf);
 
         assert_eq!(non_blank_cells(&buf), 0);
+    }
+
+    #[test]
+    fn visible_window_returns_zero_window_when_total_or_capacity_is_zero() {
+        assert_eq!(visible_window(0, 5, 3), (0, 0));
+        assert_eq!(visible_window(5, 3, 0), (0, 0));
+    }
+
+    #[test]
+    fn visible_window_clamps_to_the_last_full_window_near_the_end() {
+        assert_eq!(visible_window(10, 9, 4), (6, 4));
     }
 }

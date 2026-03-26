@@ -1,12 +1,12 @@
-mod bootstrap;
+mod detect;
 mod types;
 mod update;
 
 use evdev::Device;
 
 use self::{
-    super::bootstrap::Bootstrapped,
-    bootstrap::inspect_touch_device,
+    super::startup::StartupValue,
+    detect::inspect_touch_device,
     types::{TouchMode, TouchRange, TouchSlot},
 };
 
@@ -20,12 +20,12 @@ pub(super) struct TouchState {
 }
 
 impl TouchState {
-    pub(super) fn from_device(device: &Device) -> Bootstrapped<Self> {
+    pub(super) fn from_device(device: &Device) -> StartupValue<Self> {
         let Some(bootstrap) = inspect_touch_device(device) else {
-            return Bootstrapped::new(Self::disabled());
+            return StartupValue::new(Self::disabled());
         };
 
-        Bootstrapped::with_warnings(
+        StartupValue::with_warnings(
             Self::from_parts(
                 bootstrap.mode,
                 bootstrap.slot_limit,

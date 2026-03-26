@@ -1,4 +1,3 @@
-mod bootstrap;
 mod config;
 mod controls;
 mod layout;
@@ -6,10 +5,9 @@ mod math;
 mod model;
 mod plan;
 mod render;
+mod startup;
 mod state;
-mod theme;
 mod touch;
-mod ui;
 mod view_model;
 
 use crossterm::event::{Event, EventStream as TermEventStream, KeyEventKind};
@@ -18,11 +16,11 @@ use ratatui::{DefaultTerminal, buffer::Buffer, layout::Rect};
 use tokio::select;
 
 use self::{
-    bootstrap::MonitorBootstrap,
     controls::{apply_command, command_for},
     model::InputCollection,
     plan::{RenderPlan, build_render_plan},
     render::frame::{FrameData, render_frame},
+    startup::MonitorStartup,
     state::MonitorState,
     touch::TouchState,
     view_model::MonitorViewModel,
@@ -49,11 +47,11 @@ impl DeviceMonitor {
     fn new(device_info: DeviceInfo) -> Result<Self> {
         let identifier = device_label(&device_info);
         let DeviceInfo { device, .. } = device_info;
-        let MonitorBootstrap {
+        let MonitorStartup {
             inputs,
             touch,
             state,
-        } = MonitorBootstrap::from_device(&device);
+        } = MonitorStartup::from_device(&device);
         let device_stream = device.into_event_stream().map_err(|err| {
             ErrorArea::Monitor.evdev(format!("open device stream ({identifier})"), err)
         })?;

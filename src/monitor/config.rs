@@ -1,8 +1,6 @@
-// Theme items are consolidated in theme.rs; re-exported for convenience
-pub use crate::monitor::theme::{
-    COLOR_BUTTON_PRESSED, COLOR_TOUCH_INACTIVE, COLOR_TOUCH_POINT, style_gauge, style_header,
-    style_label,
-};
+use ratatui::style::{Color, Style};
+
+use crate::ui::theme;
 
 pub const BUTTONS_PER_ROW: usize = 3;
 pub const BUTTON_HEIGHT: u16 = 3;
@@ -39,4 +37,18 @@ pub const MAIN_BUTTONS_GAP: u16 = 2; // horizontal gap between main column and b
 pub const MAIN_COLUMN_MIN_WIDTH: u16 = 30; // minimum width for main column before splitting
 pub const BUTTONS_COLUMN_MIN_WIDTH: u16 = 24; // minimum width for buttons column before splitting
 
-// All style/color definitions live in theme.rs
+pub fn style_label() -> Style {
+    theme::style_text()
+}
+
+pub fn style_header() -> Style {
+    theme::style_header()
+}
+
+pub fn style_gauge() -> Style {
+    theme::style_gauge()
+}
+
+pub const COLOR_BUTTON_PRESSED: Color = theme::DANGER_COLOR;
+pub const COLOR_TOUCH_POINT: Color = theme::DANGER_COLOR;
+pub const COLOR_TOUCH_INACTIVE: Color = theme::MUTED_COLOR;

@@ -2,12 +2,12 @@ use evdev::{Device, InputId};
 
 use super::{model::InputCollection, plan::Counts, state::MonitorState, touch::TouchState};
 
-pub(super) struct Bootstrapped<T> {
+pub(super) struct StartupValue<T> {
     value: T,
     startup_warnings: Vec<String>,
 }
 
-impl<T> Bootstrapped<T> {
+impl<T> StartupValue<T> {
     pub(super) fn new(value: T) -> Self {
         Self::with_warnings(value, Vec::new())
     }
@@ -24,13 +24,13 @@ impl<T> Bootstrapped<T> {
     }
 }
 
-pub(super) struct MonitorBootstrap {
+pub(super) struct MonitorStartup {
     pub(super) inputs: InputCollection,
     pub(super) touch: TouchState,
     pub(super) state: MonitorState,
 }
 
-impl MonitorBootstrap {
+impl MonitorStartup {
     pub(super) fn from_device(device: &Device) -> Self {
         let (inputs, mut startup_warnings) = InputCollection::from_device(device).into_parts();
         let (touch, touch_warnings) = TouchState::from_device(device).into_parts();

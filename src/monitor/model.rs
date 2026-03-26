@@ -1,5 +1,5 @@
-mod bootstrap;
 mod buckets;
+mod collect;
 mod index;
 mod types;
 
@@ -9,9 +9,9 @@ use evdev::{AbsoluteAxisCode, Device, InputEvent};
 pub(super) use self::types::AbsoluteState;
 pub(super) use self::types::{AbsoluteAxis, DeviceInput, InputId, InputKind, InputSlice};
 use self::{
-    super::bootstrap::Bootstrapped,
-    bootstrap::collect_device_inputs,
+    super::startup::StartupValue,
     buckets::{InputBuckets, InputEntries},
+    collect::collect_device_inputs,
     index::EventIndex,
 };
 
@@ -21,10 +21,10 @@ pub(super) struct InputCollection {
 }
 
 impl InputCollection {
-    pub(super) fn from_device(device: &Device) -> Bootstrapped<Self> {
+    pub(super) fn from_device(device: &Device) -> StartupValue<Self> {
         let entries = collect_device_inputs(device);
 
-        Bootstrapped::with_warnings(
+        StartupValue::with_warnings(
             Self::from_entries(entries.absolute, entries.relative, entries.buttons),
             entries.startup_warnings,
         )
