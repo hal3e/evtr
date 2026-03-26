@@ -36,6 +36,12 @@ pub(super) struct AreaPlan {
     pub(super) areas: PlannedAreas,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ButtonsPlacement {
+    Inline,
+    Sidebar,
+}
+
 pub(super) fn plan_areas(
     content: Rect,
     counts: Counts,
@@ -43,9 +49,10 @@ pub(super) fn plan_areas(
     current_focus: Focus,
     view_model: &MonitorViewModel,
 ) -> AreaPlan {
+    let buttons_placement = buttons_placement(view_model);
     let (main_area, buttons_column) = split_buttons_column(
         content,
-        view_model.buttons_available(),
+        matches!(buttons_placement, ButtonsPlacement::Sidebar),
         view_model.main_min_width(),
         config::BUTTONS_COLUMN_MIN_WIDTH,
         min_button_gap,
@@ -101,6 +108,19 @@ pub(super) fn plan_areas(
     }
 }
 
+fn buttons_placement(view_model: &MonitorViewModel) -> ButtonsPlacement {
+    if view_model.buttons_available()
+        && (view_model.axes_available()
+            || view_model.touch_enabled()
+            || view_model.joystick_present()
+            || view_model.hat_present())
+    {
+        ButtonsPlacement::Sidebar
+    } else {
+        ButtonsPlacement::Inline
+    }
+}
+
 fn layout_request(
     view_model: &MonitorViewModel,
     touch_present: bool,
@@ -129,8 +149,13 @@ fn synced_focus(current: Focus, axes_box_present: bool, buttons_box_present: boo
 
 #[cfg(test)]
 mod tests {
-    use super::synced_focus;
-    use crate::monitor::state::Focus;
+    use ratatui::layout::Rect;
+
+    use super::{ButtonsPlacement, buttons_placement, plan_areas, synced_focus};
+    use crate::monitor::{
+        model::InputCollection, plan::Counts, state::Focus, touch::TouchState,
+        view_model::MonitorViewModel,
+    };
 
     #[test]
     fn synced_focus_forces_the_remaining_visible_section() {
@@ -138,5 +163,43 @@ mod tests {
         assert_eq!(synced_focus(Focus::Axes, true, false), Focus::Axes);
         assert_eq!(synced_focus(Focus::Axes, false, true), Focus::Buttons);
         assert_eq!(synced_focus(Focus::Buttons, false, false), Focus::Buttons);
+    }
+
+    #[test]
+    fn plan_areas_keeps_buttons_full_width_when_no_main_panels_exist() {
+        let inputs = InputCollection::from_entries_for_tests(Vec::new(), Vec::new(), Vec::new());
+        let touch = TouchState::disabled_for_tests();
+        let view_model =
+            MonitorViewModel::from_inputs(Counts::new(0, 0, 12), &inputs, &touch, true);
+        let content = Rect::new(0, 0, 90, 20);
+
+        let plan = plan_areas(
+            content,
+            Counts::new(0, 0, 12),
+            1,
+            Focus::Buttons,
+            &view_model,
+        );
+
+        assert_eq!(plan.boxes.axes, None);
+        assert_eq!(plan.boxes.buttons, Some(content));
+        assert_eq!(plan.focus, Focus::Buttons);
+    }
+
+    #[test]
+    fn buttons_placement_uses_sidebar_only_when_buttons_share_space_with_main_panels() {
+        let inputs = InputCollection::from_entries_for_tests(Vec::new(), Vec::new(), Vec::new());
+        let touch = TouchState::disabled_for_tests();
+
+        let buttons_only =
+            MonitorViewModel::from_inputs(Counts::new(0, 0, 12), &inputs, &touch, true);
+        assert_eq!(buttons_placement(&buttons_only), ButtonsPlacement::Inline);
+
+        let axes_and_buttons =
+            MonitorViewModel::from_inputs(Counts::new(2, 0, 12), &inputs, &touch, true);
+        assert_eq!(
+            buttons_placement(&axes_and_buttons),
+            ButtonsPlacement::Sidebar
+        );
     }
 }
