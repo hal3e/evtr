@@ -1,6 +1,5 @@
-use crate::monitor::plan::NavigationContext;
-
 use super::{Focus, MonitorState};
+use crate::monitor::plan::NavigationContext;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct ScrollCursor {
@@ -166,10 +165,11 @@ fn step_offset(current: usize, direction: i32, overflow: bool, max: usize) -> us
 
 #[cfg(test)]
 mod tests {
-    use crate::config::StartupFocus;
-
     use super::{Focus, MonitorState, ScrollCursor, ScrollLimits, step_offset};
-    use crate::monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState};
+    use crate::{
+        config::StartupFocus,
+        monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState},
+    };
 
     struct NavSpec {
         focus: Focus,

@@ -8,9 +8,8 @@ use ratatui::{
     },
 };
 
-use crate::monitor::{config, view_model::HatState};
-
 use super::geometry::{coord_from_index, fit_centered_aspect_rect, inset_rect};
+use crate::monitor::{config, view_model::HatState};
 
 pub(crate) struct HatRenderer;
 

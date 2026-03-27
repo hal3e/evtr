@@ -1,16 +1,17 @@
 use ratatui::layout::Rect;
 
-use crate::ui::widgets;
-
 use super::Counts;
-use crate::monitor::{
-    config,
-    layout::{
-        AxesPanel, ButtonsPanel, HatPanel, JoystickPanel, LayoutRequest, TouchPanel, axes_layout,
-        box_layout, split_buttons_column,
+use crate::{
+    monitor::{
+        config,
+        layout::{
+            AxesPanel, ButtonsPanel, HatPanel, JoystickPanel, LayoutRequest, TouchPanel,
+            axes_layout, box_layout, split_buttons_column,
+        },
+        state::Focus,
+        view_model::MonitorViewModel,
     },
-    state::Focus,
-    view_model::MonitorViewModel,
+    ui::widgets,
 };
 
 pub(crate) struct PlannedBoxes {

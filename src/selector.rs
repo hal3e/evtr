@@ -14,6 +14,7 @@ use evdev::Device;
 use futures::StreamExt;
 use ratatui::DefaultTerminal;
 
+pub(crate) use self::devices::device_label;
 use self::{
     commands::command_for,
     devices::DeviceCatalog,
@@ -26,8 +27,6 @@ use crate::{
     error::{ErrorArea, Result},
     evtr::State,
 };
-
-pub(crate) use self::devices::device_label;
 
 #[derive(Debug)]
 pub(crate) struct DeviceInfo {

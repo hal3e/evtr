@@ -1,8 +1,7 @@
 mod popup;
 mod scroll;
 
-use crate::config::StartupFocus;
-use crate::monitor::plan::Counts;
+use crate::{config::StartupFocus, monitor::plan::Counts};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum Focus {
@@ -81,8 +80,7 @@ fn initial_focus(counts: Counts, startup_focus: StartupFocus) -> Focus {
 #[cfg(test)]
 mod tests {
     use super::{ActivePopup, Focus, MonitorState};
-    use crate::config::StartupFocus;
-    use crate::monitor::plan::Counts;
+    use crate::{config::StartupFocus, monitor::plan::Counts};
 
     #[test]
     fn new_prefers_axes_focus_when_any_axes_exist() {

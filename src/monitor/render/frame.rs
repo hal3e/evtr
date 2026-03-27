@@ -4,24 +4,25 @@ use ratatui::{
     widgets::{Paragraph, Widget},
 };
 
-use crate::ui::{
-    popup::{help_popup, info_popup, render_popup},
-    widgets,
-};
-
 use super::{
     axis::AxisRenderer, buttons::ButtonGrid, hat::HatRenderer, joystick::JoystickRenderer,
     touch::TouchRenderer,
 };
-use crate::monitor::{
-    config,
-    controls::help_lines,
-    layout::main_layout,
-    model::InputCollection,
-    plan::RenderPlan,
-    state::{ActivePopup, MonitorState},
-    touch::TouchState,
-    view_model::MonitorViewModel,
+use crate::{
+    monitor::{
+        config,
+        controls::help_lines,
+        layout::main_layout,
+        model::InputCollection,
+        plan::RenderPlan,
+        state::{ActivePopup, MonitorState},
+        touch::TouchState,
+        view_model::MonitorViewModel,
+    },
+    ui::{
+        popup::{help_popup, info_popup, render_popup},
+        widgets,
+    },
 };
 
 const HELP_POPUP_MIN_WIDTH: u16 = 30;

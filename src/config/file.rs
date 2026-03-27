@@ -1,15 +1,6 @@
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
-use crate::{
-    config::validate::{
-        parse_bindings, parse_hex_color_field, require_positive_i32, require_positive_usize,
-        require_range_u16, require_range_usize, validate_selector_layout,
-        validate_unique_key_bindings,
-    },
-    error::{Error, Result},
-};
-
 use super::{
     KeyBinding,
     types::{
@@ -17,6 +8,14 @@ use super::{
         SelectorConfig, SelectorKeymap, SelectorLayoutConfig, SortOrder, StartupFocus, ThemeConfig,
         ThemePalette,
     },
+};
+use crate::{
+    config::validate::{
+        parse_bindings, parse_hex_color_field, require_positive_i32, require_positive_usize,
+        require_range_u16, require_range_usize, validate_selector_layout,
+        validate_unique_key_bindings,
+    },
+    error::{Error, Result},
 };
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

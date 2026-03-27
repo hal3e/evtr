@@ -3,11 +3,9 @@ mod top_row;
 
 use ratatui::layout::Rect;
 
-use crate::monitor::config;
-
 pub(crate) use self::split::split_buttons_column;
-
 use self::top_row::{TopRowRequest, place_top_row, plan_top_row};
+use crate::monitor::config;
 
 pub(crate) struct BoxLayout {
     pub(crate) joystick_box: Option<Rect>,

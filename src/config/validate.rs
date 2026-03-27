@@ -3,9 +3,8 @@ use std::collections::HashMap;
 use crossterm::event::{KeyCode, KeyModifiers};
 use ratatui::style::Color;
 
-use crate::error::{Error, Result};
-
 use super::{KeyBinding, SelectorLayoutConfig};
+use crate::error::{Error, Result};
 
 pub(crate) fn parse_bindings(values: Vec<String>, field: &str) -> Result<Vec<KeyBinding>> {
     if values.is_empty() {

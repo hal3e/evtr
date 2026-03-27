@@ -2,9 +2,8 @@ use std::io;
 
 use evdev::{AbsoluteAxisCode, AttributeSetRef, Device, KeyCode, RelativeAxisCode};
 
-use crate::monitor::config;
-
 use super::types::{AbsoluteState, DeviceInput};
+use crate::monitor::config;
 
 pub(super) struct BootstrapEntries {
     pub(super) absolute: Vec<(u16, DeviceInput)>,

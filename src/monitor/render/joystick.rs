@@ -8,13 +8,12 @@ use ratatui::{
     },
 };
 
+use super::geometry::{
+    centered_pair, fit_centered_aspect_rect, normalize_ratio, signed_unit_point,
+};
 use crate::monitor::{
     config,
     view_model::{JoystickState, StickState},
-};
-
-use super::geometry::{
-    centered_pair, fit_centered_aspect_rect, normalize_ratio, signed_unit_point,
 };
 
 pub(crate) struct JoystickRenderer;

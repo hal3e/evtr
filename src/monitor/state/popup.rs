@@ -1,6 +1,5 @@
-use crate::monitor::plan::NavigationContext;
-
 use super::{ActivePopup, Focus, MonitorState};
+use crate::monitor::plan::NavigationContext;
 
 impl MonitorState {
     pub(in crate::monitor) fn active_popup(&self) -> ActivePopup {
@@ -49,10 +48,11 @@ fn next_focus(current: Focus, focusable: bool) -> Focus {
 
 #[cfg(test)]
 mod tests {
-    use crate::config::StartupFocus;
-
     use super::{ActivePopup, Focus, MonitorState, next_focus, toggled_popup};
-    use crate::monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState};
+    use crate::{
+        config::StartupFocus,
+        monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState},
+    };
 
     fn navigation(focus: Focus, focusable: bool) -> NavigationContext {
         NavigationContext::new_for_tests(

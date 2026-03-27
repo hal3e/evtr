@@ -4,18 +4,22 @@ mod path;
 mod types;
 mod validate;
 
-use std::fs;
-use std::path::Path;
-use std::sync::{LazyLock, RwLock};
+use std::{
+    fs,
+    path::Path,
+    sync::{LazyLock, RwLock},
+};
 
-use crate::config::file::ConfigFile;
-use crate::config::path::resolved_read_path;
-use crate::error::{Error, ErrorArea, Result};
-
-pub(crate) use self::keymap::KeyBinding;
-pub(crate) use self::types::{
-    Config, KeymapConfig, LayoutConfig, MonitorConfig, SelectorConfig, SelectorLayoutConfig,
-    SortOrder, StartupFocus, ThemeConfig,
+pub(crate) use self::{
+    keymap::KeyBinding,
+    types::{
+        Config, KeymapConfig, LayoutConfig, MonitorConfig, SelectorConfig, SelectorLayoutConfig,
+        SortOrder, StartupFocus, ThemeConfig,
+    },
+};
+use crate::{
+    config::{file::ConfigFile, path::resolved_read_path},
+    error::{Error, ErrorArea, Result},
 };
 
 static RUNTIME_CONFIG: LazyLock<RwLock<Config>> = LazyLock::new(|| RwLock::new(Config::default()));

@@ -3,20 +3,18 @@ mod scroll;
 
 use ratatui::layout::Rect;
 
+#[cfg(test)]
+pub(crate) use self::scroll::{ScrollBounds as TestScrollBounds, ScrollState as TestScrollState};
+use self::{
+    areas::{PlannedAreas, PlannedBoxes, plan_areas},
+    scroll::{ScrollBounds, ScrollState, VisibleCapacities, clamp_scroll_state},
+};
 use super::{
     config,
     layout::main_layout,
     state::{Focus, MonitorState},
     view_model::MonitorViewModel,
 };
-
-use self::{
-    areas::{PlannedAreas, PlannedBoxes, plan_areas},
-    scroll::{ScrollBounds, ScrollState, VisibleCapacities, clamp_scroll_state},
-};
-
-#[cfg(test)]
-pub(crate) use self::scroll::{ScrollBounds as TestScrollBounds, ScrollState as TestScrollState};
 
 #[derive(Clone, Copy)]
 pub(super) struct Counts {

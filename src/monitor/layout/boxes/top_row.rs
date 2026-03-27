@@ -1,11 +1,10 @@
 use ratatui::layout::Rect;
 
-use crate::monitor::config;
-
 use super::{
     BoxMinimums, HatPanel, JoystickPanel,
     split::{gap_if_room, ratio_widths, split_row_ratio},
 };
+use crate::monitor::config;
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) enum TopRowRequest {

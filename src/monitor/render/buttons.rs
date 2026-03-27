@@ -8,11 +8,14 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph, Widget},
 };
 
-use crate::monitor::model::{DeviceInput, InputKind, InputSlice};
-use crate::ui::text;
-
 use self::layout::{ButtonLayout, GridMetrics};
-use crate::monitor::config;
+use crate::{
+    monitor::{
+        config,
+        model::{DeviceInput, InputKind, InputSlice},
+    },
+    ui::text,
+};
 
 pub(crate) struct ButtonGrid;
 

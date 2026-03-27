@@ -4,11 +4,13 @@ use ratatui::{
     widgets::{Gauge, Paragraph, Widget},
 };
 
-use crate::monitor::{
-    config,
-    model::{DeviceInput, InputSlice},
+use crate::{
+    monitor::{
+        config,
+        model::{DeviceInput, InputSlice},
+    },
+    ui::text,
 };
-use crate::ui::text;
 
 pub(crate) struct AxisRenderer;
 

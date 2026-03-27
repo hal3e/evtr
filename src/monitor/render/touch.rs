@@ -8,9 +8,8 @@ use ratatui::{
     },
 };
 
-use crate::monitor::config;
-
 use super::geometry::{canvas_range, clamp_i32, invert_in_range};
+use crate::monitor::config;
 
 pub(crate) struct TouchRenderer;
 

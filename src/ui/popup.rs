@@ -8,9 +8,8 @@ use ratatui::{
     widgets::{Clear, Paragraph, Widget, Wrap},
 };
 
-use super::widgets;
-
 pub(crate) use self::presets::{error_popup, help_popup, info_popup};
+use super::widgets;
 
 pub(crate) struct Popup<'a> {
     pub(crate) title: &'a str,

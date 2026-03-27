@@ -1,10 +1,10 @@
 use std::fmt;
 
-use crate::config::keymap::key_list;
 use ratatui::style::Color;
 use serde::{Deserialize, Serialize};
 
 use super::KeyBinding;
+use crate::config::keymap::key_list;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct Config {
