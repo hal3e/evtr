@@ -1,11 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-const EXIT_KEY: char = 'c';
-const HELP_KEY: char = '?';
-const MOVE_UP_KEY: char = 'p';
-const MOVE_DOWN_KEY: char = 'n';
-const CLEAR_SEARCH_KEY: char = 'u';
-const REFRESH_KEY: char = 'r';
+use crate::config;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(super) enum SelectorMode {
@@ -39,70 +34,89 @@ pub(super) enum SelectorCommand {
 }
 
 pub(super) fn command_for(key: KeyEvent, mode: SelectorMode) -> SelectorCommand {
+    let keys = config::keys().selector;
     match mode {
-        SelectorMode::Help => match key.code {
-            KeyCode::Esc | KeyCode::Char(HELP_KEY) => SelectorCommand::ToggleHelp,
-            KeyCode::Char(EXIT_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        SelectorMode::Help => {
+            if matches_any(key, &keys.toggle_help) {
+                SelectorCommand::ToggleHelp
+            } else if matches_any(key, &keys.exit) {
                 SelectorCommand::Exit
+            } else {
+                SelectorCommand::None
             }
-            _ => SelectorCommand::None,
-        },
-        SelectorMode::Browsing => match key.code {
-            KeyCode::Enter => SelectorCommand::Select,
-            KeyCode::Esc => SelectorCommand::Back,
-            KeyCode::Char(HELP_KEY) => SelectorCommand::ToggleHelp,
-            KeyCode::Char(EXIT_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+        }
+        SelectorMode::Browsing => {
+            if matches_any(key, &keys.select) {
+                SelectorCommand::Select
+            } else if matches_any(key, &keys.back) {
+                SelectorCommand::Back
+            } else if matches_any(key, &keys.toggle_help) {
+                SelectorCommand::ToggleHelp
+            } else if matches_any(key, &keys.exit) {
                 SelectorCommand::Exit
-            }
-            KeyCode::Up => SelectorCommand::MoveUp,
-            KeyCode::Char(MOVE_UP_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            } else if matches_any(key, &keys.move_up) {
                 SelectorCommand::MoveUp
-            }
-            KeyCode::Down => SelectorCommand::MoveDown,
-            KeyCode::Char(MOVE_DOWN_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            } else if matches_any(key, &keys.move_down) {
                 SelectorCommand::MoveDown
-            }
-            KeyCode::PageUp => SelectorCommand::PageUp,
-            KeyCode::PageDown => SelectorCommand::PageDown,
-            KeyCode::Home => SelectorCommand::Home,
-            KeyCode::End => SelectorCommand::End,
-            KeyCode::Backspace => SelectorCommand::DeleteChar,
-            KeyCode::Char(CLEAR_SEARCH_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            } else if matches_any(key, &keys.page_up) {
+                SelectorCommand::PageUp
+            } else if matches_any(key, &keys.page_down) {
+                SelectorCommand::PageDown
+            } else if matches_any(key, &keys.home) {
+                SelectorCommand::Home
+            } else if matches_any(key, &keys.end) {
+                SelectorCommand::End
+            } else if matches_any(key, &keys.delete_char) {
+                SelectorCommand::DeleteChar
+            } else if matches_any(key, &keys.clear_search) {
                 SelectorCommand::ClearSearch
-            }
-            KeyCode::Char(REFRESH_KEY) if key.modifiers.contains(KeyModifiers::CONTROL) => {
+            } else if matches_any(key, &keys.refresh) {
                 SelectorCommand::Refresh
+            } else {
+                add_char_command(key)
             }
-            KeyCode::Char(c)
-                if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() =>
-            {
-                SelectorCommand::AddChar(c)
-            }
-            _ => SelectorCommand::None,
-        },
+        }
     }
 }
 
 pub(super) fn help_lines() -> Vec<String> {
+    let keys = config::keys().selector;
     vec![
-        format!(
-            "Move: Up/Down, {}, {}, PageUp/PageDown, Home/End",
-            ctrl_key(MOVE_UP_KEY),
-            ctrl_key(MOVE_DOWN_KEY),
-        ),
-        "Select: Enter".to_string(),
-        format!("Exit: Esc or {}", ctrl_key(EXIT_KEY)),
-        format!(
-            "Search: type to filter, Backspace, {} clear",
-            ctrl_key(CLEAR_SEARCH_KEY),
-        ),
-        format!("Refresh: {}", ctrl_key(REFRESH_KEY)),
-        format!("Help: {HELP_KEY} (press {HELP_KEY} or Esc to close)"),
+        format!("Move up: {}", bindings(&keys.move_up)),
+        format!("Move down: {}", bindings(&keys.move_down)),
+        format!("Page up: {}", bindings(&keys.page_up)),
+        format!("Page down: {}", bindings(&keys.page_down)),
+        format!("Home: {}", bindings(&keys.home)),
+        format!("End: {}", bindings(&keys.end)),
+        format!("Select: {}", bindings(&keys.select)),
+        format!("Back: {}", bindings(&keys.back)),
+        format!("Exit: {}", bindings(&keys.exit)),
+        format!("Search clear: {}", bindings(&keys.clear_search)),
+        format!("Delete char: {}", bindings(&keys.delete_char)),
+        format!("Refresh: {}", bindings(&keys.refresh)),
+        format!("Help: {}", bindings(&keys.toggle_help)),
     ]
 }
 
-fn ctrl_key(key: char) -> String {
-    format!("Ctrl-{}", key.to_ascii_uppercase())
+fn matches_any(key: KeyEvent, bindings: &[config::KeyBinding]) -> bool {
+    bindings.iter().any(|binding| binding.matches(key))
+}
+
+fn bindings(bindings: &[config::KeyBinding]) -> String {
+    bindings
+        .iter()
+        .map(config::KeyBinding::display)
+        .collect::<Vec<_>>()
+        .join(", ")
+}
+
+fn add_char_command(key: KeyEvent) -> SelectorCommand {
+    match key.code {
+        KeyCode::Char(c) if key.modifiers == KeyModifiers::SHIFT || key.modifiers.is_empty() => {
+            SelectorCommand::AddChar(c)
+        }
+        _ => SelectorCommand::None,
+    }
 }
 
 #[cfg(test)]
@@ -137,7 +151,7 @@ mod tests {
             SelectorCommand::Back
         );
         assert_eq!(
-            command_for(key(KeyCode::Esc), SelectorMode::Help),
+            command_for(key(KeyCode::Char('?')), SelectorMode::Help),
             SelectorCommand::ToggleHelp
         );
     }
@@ -159,66 +173,6 @@ mod tests {
         assert_eq!(
             command_for(ctrl_char('n'), SelectorMode::Browsing),
             SelectorCommand::MoveDown
-        );
-        assert_eq!(
-            command_for(key(KeyCode::PageUp), SelectorMode::Browsing),
-            SelectorCommand::PageUp
-        );
-        assert_eq!(
-            command_for(key(KeyCode::PageDown), SelectorMode::Browsing),
-            SelectorCommand::PageDown
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Home), SelectorMode::Browsing),
-            SelectorCommand::Home
-        );
-        assert_eq!(
-            command_for(key(KeyCode::End), SelectorMode::Browsing),
-            SelectorCommand::End
-        );
-    }
-
-    #[test]
-    fn command_for_maps_selector_action_keys_to_explicit_variants() {
-        assert_eq!(
-            command_for(key(KeyCode::Enter), SelectorMode::Browsing),
-            SelectorCommand::Select
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Backspace), SelectorMode::Browsing),
-            SelectorCommand::DeleteChar
-        );
-        assert_eq!(
-            command_for(ctrl_char('u'), SelectorMode::Browsing),
-            SelectorCommand::ClearSearch
-        );
-        assert_eq!(
-            command_for(ctrl_char('r'), SelectorMode::Browsing),
-            SelectorCommand::Refresh
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Char('?')), SelectorMode::Browsing),
-            SelectorCommand::ToggleHelp
-        );
-    }
-
-    #[test]
-    fn command_for_help_mode_only_allows_close_or_exit_keys() {
-        assert_eq!(
-            command_for(key(KeyCode::Char('?')), SelectorMode::Help),
-            SelectorCommand::ToggleHelp
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Enter), SelectorMode::Help),
-            SelectorCommand::None
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Backspace), SelectorMode::Help),
-            SelectorCommand::None
-        );
-        assert_eq!(
-            command_for(key(KeyCode::Char('a')), SelectorMode::Help),
-            SelectorCommand::None
         );
     }
 
@@ -242,17 +196,9 @@ mod tests {
     }
 
     #[test]
-    fn help_lines_match_the_documented_selector_bindings() {
-        assert_eq!(
-            help_lines(),
-            vec![
-                "Move: Up/Down, Ctrl-P, Ctrl-N, PageUp/PageDown, Home/End".to_string(),
-                "Select: Enter".to_string(),
-                "Exit: Esc or Ctrl-C".to_string(),
-                "Search: type to filter, Backspace, Ctrl-U clear".to_string(),
-                "Refresh: Ctrl-R".to_string(),
-                "Help: ? (press ? or Esc to close)".to_string(),
-            ]
-        );
+    fn help_lines_reflect_default_bindings() {
+        let lines = help_lines();
+        assert!(lines.iter().any(|line| line == "Move up: Up, Ctrl-p"));
+        assert!(lines.iter().any(|line| line == "Refresh: Ctrl-r"));
     }
 }

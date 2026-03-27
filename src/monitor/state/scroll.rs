@@ -166,6 +166,8 @@ fn step_offset(current: usize, direction: i32, overflow: bool, max: usize) -> us
 
 #[cfg(test)]
 mod tests {
+    use crate::config::StartupFocus;
+
     use super::{Focus, MonitorState, ScrollCursor, ScrollLimits, step_offset};
     use crate::monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState};
 
@@ -287,7 +289,8 @@ mod tests {
 
     #[test]
     fn scroll_page_zero_is_a_no_op() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
         state.axis_scroll = 2;
         state.button_row_scroll = 3;
 
@@ -312,7 +315,8 @@ mod tests {
 
     #[test]
     fn sync_from_navigation_updates_focus_and_scroll_positions() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
 
         state.sync_from_navigation(navigation(NavSpec {
             focus: Focus::Buttons,

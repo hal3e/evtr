@@ -1,6 +1,7 @@
-use std::path::Path;
+use std::{cmp::Ordering, path::Path};
 
 use super::{DeviceInfo, discovery::DiscoveryResult};
+use crate::config::SortOrder;
 
 pub(super) struct DeviceCatalog {
     devices: Vec<DeviceInfo>,
@@ -8,9 +9,13 @@ pub(super) struct DeviceCatalog {
 }
 
 impl DeviceCatalog {
-    pub(super) fn from_discovery(discovery: DiscoveryResult<DeviceInfo>) -> (Self, Option<String>) {
+    pub(super) fn from_discovery(
+        discovery: DiscoveryResult<DeviceInfo>,
+        sort: SortOrder,
+    ) -> (Self, Option<String>) {
         let (devices, labels, error_message) =
             catalog_parts_from_discovery(discovery, device_label);
+        let (devices, labels) = sort_catalog(devices, labels, sort);
 
         (Self { devices, labels }, error_message)
     }
@@ -61,12 +66,44 @@ fn take_selected_item<T>(
     Some(items.swap_remove(index))
 }
 
+fn sort_catalog(
+    devices: Vec<DeviceInfo>,
+    labels: Vec<String>,
+    sort: SortOrder,
+) -> (Vec<DeviceInfo>, Vec<String>) {
+    sort_entries(devices.into_iter().zip(labels).collect(), |left, right| {
+        compare_devices(left, right, sort)
+    })
+}
+
+fn compare_devices(left: &DeviceInfo, right: &DeviceInfo, sort: SortOrder) -> Ordering {
+    match sort {
+        SortOrder::Path => left
+            .path
+            .cmp(&right.path)
+            .then_with(|| left.name.cmp(&right.name)),
+        SortOrder::Name => left
+            .name
+            .cmp(&right.name)
+            .then_with(|| left.path.cmp(&right.path)),
+    }
+}
+
+fn sort_entries<T>(
+    mut entries: Vec<(T, String)>,
+    mut compare: impl FnMut(&T, &T) -> Ordering,
+) -> (Vec<T>, Vec<String>) {
+    entries.sort_unstable_by(|(left, _), (right, _)| compare(left, right));
+    entries.into_iter().unzip()
+}
+
 #[cfg(test)]
 mod tests {
     use std::{io, path::Path};
 
     use super::{
-        DeviceCatalog, catalog_parts_from_discovery, format_device_label, take_selected_item,
+        DeviceCatalog, catalog_parts_from_discovery, format_device_label, sort_entries,
+        take_selected_item,
     };
     use crate::selector::discovery::DiscoveryResult;
 
@@ -168,5 +205,25 @@ mod tests {
         assert!(!items.contains(&20));
         assert!(!labels.iter().any(|label| label == "Pad B"));
         assert_eq!(items.len(), labels.len());
+    }
+
+    #[test]
+    fn sort_entries_reorders_without_index_invalidation() {
+        let entries = vec![
+            (("Pad C", 9), "Pad C (/dev/input/event9)".to_string()),
+            (("Pad A", 3), "Pad A (/dev/input/event3)".to_string()),
+            (("Pad B", 7), "Pad B (/dev/input/event7)".to_string()),
+        ];
+        let (devices, labels) = sort_entries(entries, |left, right| left.1.cmp(&right.1));
+
+        assert_eq!(devices, vec![("Pad A", 3), ("Pad B", 7), ("Pad C", 9)]);
+        assert_eq!(
+            labels,
+            vec![
+                "Pad A (/dev/input/event3)".to_string(),
+                "Pad B (/dev/input/event7)".to_string(),
+                "Pad C (/dev/input/event9)".to_string(),
+            ]
+        );
     }
 }

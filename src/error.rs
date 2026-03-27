@@ -8,6 +8,9 @@ pub enum Error {
         context: String,
         source: io::Error,
     },
+    Config {
+        context: String,
+    },
     NoDevicesFound,
     StreamEnded {
         area: ErrorArea,
@@ -20,6 +23,7 @@ pub type Result<T> = std::result::Result<T, Error>;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum ErrorArea {
     App,
+    Config,
     Selector,
     Monitor,
 }
@@ -52,6 +56,12 @@ impl Error {
     pub fn stream_ended(area: ErrorArea, context: &'static str) -> Self {
         Self::StreamEnded { area, context }
     }
+
+    pub fn config(context: impl Into<String>) -> Self {
+        Self::Config {
+            context: context.into(),
+        }
+    }
 }
 
 impl ErrorArea {
@@ -72,6 +82,7 @@ impl fmt::Display for ErrorArea {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::App => write!(f, "app"),
+            Self::Config => write!(f, "config"),
             Self::Selector => write!(f, "selector"),
             Self::Monitor => write!(f, "monitor"),
         }
@@ -96,6 +107,7 @@ impl fmt::Display for Error {
                 context,
                 source,
             } => write!(f, "{area} {source_kind}: {context}: {source}"),
+            Error::Config { context } => write!(f, "config: {context}"),
             Error::NoDevicesFound => write!(f, "no input devices found"),
             Error::StreamEnded { area, context } => write!(f, "{area} stream ended: {context}"),
         }
@@ -106,7 +118,7 @@ impl error::Error for Error {
     fn source(&self) -> Option<&(dyn error::Error + 'static)> {
         match self {
             Error::External { source, .. } => Some(source),
-            Error::NoDevicesFound | Error::StreamEnded { .. } => None,
+            Error::Config { .. } | Error::NoDevicesFound | Error::StreamEnded { .. } => None,
         }
     }
 }
@@ -153,6 +165,14 @@ mod tests {
             err.to_string(),
             "selector stream ended: terminal event stream"
         );
+        assert!(err.source().is_none());
+    }
+
+    #[test]
+    fn config_errors_are_displayed_cleanly() {
+        let err = super::Error::config("invalid config.toml");
+
+        assert_eq!(err.to_string(), "config: invalid config.toml");
         assert!(err.source().is_none());
     }
 }

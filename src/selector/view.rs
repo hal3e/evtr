@@ -10,13 +10,14 @@ use super::{
     devices::DeviceCatalog,
     state::SelectorState,
 };
-use crate::ui::{
-    popup::{error_popup, help_popup, render_popup},
-    theme, widgets,
+use crate::{
+    config,
+    ui::{
+        popup::{error_popup, help_popup, render_popup},
+        theme, widgets,
+    },
 };
 
-const LAYOUT_MARGIN_PCT: u16 = 20;
-const LAYOUT_CONTENT_WIDTH_PCT: u16 = 60;
 const TOP_PADDING_HEIGHT: u16 = 1;
 const SEARCH_BOX_HEIGHT: u16 = 3;
 const MAIN_MIN_HEIGHT: u16 = 3;
@@ -33,11 +34,12 @@ pub(super) fn render_selector(
     buf: &mut Buffer,
 ) {
     use Constraint::{Length, Min, Percentage};
+    let layout = config::layout().selector;
 
     let [_left_margin, content_area, _right_margin] = Layout::horizontal([
-        Percentage(LAYOUT_MARGIN_PCT),
-        Percentage(LAYOUT_CONTENT_WIDTH_PCT),
-        Percentage(LAYOUT_MARGIN_PCT),
+        Percentage(layout.margin_percent),
+        Percentage(layout.content_width_percent),
+        Percentage(layout.margin_percent),
     ])
     .areas(area);
 
@@ -90,7 +92,7 @@ fn render_device_list(
         .style(item_style)
         .highlight_style(
             item_style
-                .bg(theme::MUTED_COLOR)
+                .bg(theme::muted_color())
                 .add_modifier(Modifier::BOLD),
         )
         .highlight_symbol("> ");

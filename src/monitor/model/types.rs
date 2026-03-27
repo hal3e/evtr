@@ -1,6 +1,6 @@
 use evdev::{EventType, InputEvent};
 
-use crate::monitor::{config, math};
+use crate::{config, monitor::math};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub(crate) enum InputTypeId {
@@ -60,7 +60,9 @@ impl InputKind {
     pub(crate) fn normalized(&self) -> f64 {
         match *self {
             Self::Absolute(state) => math::normalize_range(state.value, state.min, state.max),
-            Self::Relative(value) => math::normalize_wrapped(value, config::RELATIVE_DISPLAY_RANGE),
+            Self::Relative(value) => {
+                math::normalize_wrapped(value, config::monitor().relative_display_range)
+            }
             Self::Button(pressed) => (pressed as u8) as f64,
         }
     }
@@ -69,7 +71,7 @@ impl InputKind {
         match self {
             Self::Absolute(state) => state.value.to_string(),
             Self::Relative(value) => {
-                math::wrapped_value(*value, config::RELATIVE_DISPLAY_RANGE).to_string()
+                math::wrapped_value(*value, config::monitor().relative_display_range).to_string()
             }
             Self::Button(pressed) => button_label(*pressed).to_string(),
         }

@@ -1,6 +1,7 @@
 mod popup;
 mod scroll;
 
+use crate::config::StartupFocus;
 use crate::monitor::plan::Counts;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -27,12 +28,13 @@ pub(super) struct MonitorState {
 }
 
 impl MonitorState {
-    pub(super) fn new(counts: Counts, info_lines: Vec<String>) -> Self {
-        let focus = if counts.total_axes() > 0 {
-            Focus::Axes
-        } else {
-            Focus::Buttons
-        };
+    pub(super) fn new(
+        counts: Counts,
+        info_lines: Vec<String>,
+        startup_focus: StartupFocus,
+        joystick_invert_y: bool,
+    ) -> Self {
+        let focus = initial_focus(counts, startup_focus);
 
         Self {
             counts,
@@ -41,7 +43,7 @@ impl MonitorState {
             focus,
             axis_scroll: 0,
             button_row_scroll: 0,
-            joystick_invert_y: true,
+            joystick_invert_y,
         }
     }
 
@@ -62,21 +64,46 @@ impl MonitorState {
     }
 }
 
+fn initial_focus(counts: Counts, startup_focus: StartupFocus) -> Focus {
+    match startup_focus {
+        StartupFocus::Auto => {
+            if counts.total_axes() > 0 {
+                Focus::Axes
+            } else {
+                Focus::Buttons
+            }
+        }
+        StartupFocus::Axes => Focus::Axes,
+        StartupFocus::Buttons => Focus::Buttons,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{ActivePopup, Focus, MonitorState};
+    use crate::config::StartupFocus;
     use crate::monitor::plan::Counts;
 
     #[test]
     fn new_prefers_axes_focus_when_any_axes_exist() {
-        let state = MonitorState::new(Counts::new(1, 0, 3), vec!["info".to_string()]);
+        let state = MonitorState::new(
+            Counts::new(1, 0, 3),
+            vec!["info".to_string()],
+            StartupFocus::Auto,
+            true,
+        );
 
         assert_eq!(state.focus, Focus::Axes);
     }
 
     #[test]
     fn new_falls_back_to_buttons_focus_when_no_axes_exist() {
-        let state = MonitorState::new(Counts::new(0, 0, 3), vec!["info".to_string()]);
+        let state = MonitorState::new(
+            Counts::new(0, 0, 3),
+            vec!["info".to_string()],
+            StartupFocus::Auto,
+            true,
+        );
 
         assert_eq!(state.focus, Focus::Buttons);
     }
@@ -89,6 +116,8 @@ mod tests {
                 "name: pad".to_string(),
                 "path: /dev/input/event3".to_string(),
             ],
+            StartupFocus::Auto,
+            true,
         );
 
         assert_eq!(
@@ -99,5 +128,18 @@ mod tests {
         assert_eq!(state.axis_scroll, 0);
         assert_eq!(state.button_row_scroll, 0);
         assert!(state.joystick_invert_y());
+    }
+
+    #[test]
+    fn new_honors_explicit_button_focus() {
+        let state = MonitorState::new(
+            Counts::new(2, 0, 2),
+            vec!["info".to_string()],
+            StartupFocus::Buttons,
+            false,
+        );
+
+        assert_eq!(state.focus, Focus::Buttons);
+        assert!(!state.joystick_invert_y());
     }
 }

@@ -22,7 +22,7 @@ pub(crate) fn split_buttons_column(
     }
 
     let gap = gap_if_room(area.width, config::MAIN_BUTTONS_GAP);
-    let (main_width, buttons_width) = ratio_widths(area.width, gap, config::MAIN_COLUMN_PERCENT);
+    let (main_width, buttons_width) = ratio_widths(area.width, gap, config::main_column_percent());
 
     if main_width < main_min_width || buttons_width < buttons_min_width {
         return (area, None);
@@ -71,7 +71,7 @@ fn buttons_width_ok(width: u16, min_gap: u16) -> bool {
     if width == 0 {
         return false;
     }
-    let button_width = width / config::BUTTONS_PER_ROW as u16;
+    let button_width = width / config::buttons_per_row() as u16;
     button_width > min_gap
 }
 

@@ -30,6 +30,7 @@ use crate::{
     selector::{DeviceInfo, device_label},
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum MonitorExit {
     BackToSelector,
     ExitApp,

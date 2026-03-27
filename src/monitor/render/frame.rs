@@ -185,12 +185,15 @@ mod tests {
     use ratatui::{buffer::Buffer, layout::Rect};
 
     use super::{FrameData, joystick_title, render_frame};
-    use crate::monitor::{
-        model::InputCollection,
-        plan::{Counts, build_render_plan},
-        state::MonitorState,
-        touch::TouchState,
-        view_model::MonitorViewModel,
+    use crate::{
+        config::StartupFocus,
+        monitor::{
+            model::InputCollection,
+            plan::{Counts, build_render_plan},
+            state::MonitorState,
+            touch::TouchState,
+            view_model::MonitorViewModel,
+        },
     };
 
     fn buffer_text(buf: &Buffer) -> String {
@@ -223,7 +226,7 @@ mod tests {
 
     #[test]
     fn render_frame_writes_the_identifier_header() {
-        let state = MonitorState::new(Counts::new(0, 0, 0), Vec::new());
+        let state = MonitorState::new(Counts::new(0, 0, 0), Vec::new(), StartupFocus::Auto, true);
         let text = render_smoke(&state, Rect::new(0, 0, 40, 10));
 
         assert!(text.contains("Example Pad"));
@@ -237,6 +240,8 @@ mod tests {
                 "name: Example Pad".to_string(),
                 "path: /dev/input/event3".to_string(),
             ],
+            StartupFocus::Auto,
+            true,
         );
         state.toggle_info();
 
@@ -248,12 +253,13 @@ mod tests {
 
     #[test]
     fn render_frame_shows_help_popup_content() {
-        let mut state = MonitorState::new(Counts::new(0, 0, 0), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(0, 0, 0), Vec::new(), StartupFocus::Auto, true);
         state.toggle_help();
 
         let text = render_smoke(&state, Rect::new(0, 0, 60, 20));
 
         assert!(text.contains("Help"));
-        assert!(text.contains("Scroll: Up/Down or k/j, PageUp/PageDown"));
+        assert!(text.contains("Scroll up: Up, k"));
     }
 }

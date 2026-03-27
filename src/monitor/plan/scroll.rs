@@ -37,7 +37,7 @@ impl ScrollBounds {
             && (effective_counts.abs > abs_visible_capacity
                 || effective_counts.rel > rel_visible_capacity);
 
-        let total_button_rows = effective_counts.btn.div_ceil(config::BUTTONS_PER_ROW);
+        let total_button_rows = effective_counts.btn.div_ceil(config::buttons_per_row());
         let button_row_max_start = if button_rows_capacity == 0 {
             0
         } else {

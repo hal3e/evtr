@@ -49,6 +49,8 @@ fn next_focus(current: Focus, focusable: bool) -> Focus {
 
 #[cfg(test)]
 mod tests {
+    use crate::config::StartupFocus;
+
     use super::{ActivePopup, Focus, MonitorState, next_focus, toggled_popup};
     use crate::monitor::plan::{Counts, NavigationContext, TestScrollBounds, TestScrollState};
 
@@ -89,7 +91,8 @@ mod tests {
 
     #[test]
     fn toggle_help_closes_when_called_twice() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
 
         state.toggle_help();
         assert_eq!(state.active_popup(), ActivePopup::Help);
@@ -100,7 +103,8 @@ mod tests {
 
     #[test]
     fn toggle_info_closes_when_called_twice() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
 
         state.toggle_info();
         assert_eq!(state.active_popup(), ActivePopup::Info);
@@ -111,7 +115,8 @@ mod tests {
 
     #[test]
     fn toggle_help_and_info_replace_each_other() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
 
         state.toggle_help();
         assert_eq!(state.active_popup(), ActivePopup::Help);
@@ -125,7 +130,8 @@ mod tests {
 
     #[test]
     fn focus_prev_uses_the_same_cycle_behavior_as_focus_next() {
-        let mut state = MonitorState::new(Counts::new(1, 0, 1), Vec::new());
+        let mut state =
+            MonitorState::new(Counts::new(1, 0, 1), Vec::new(), StartupFocus::Auto, true);
 
         state.focus_prev(navigation(Focus::Axes, true));
         assert_eq!(state.focus(), Focus::Buttons);

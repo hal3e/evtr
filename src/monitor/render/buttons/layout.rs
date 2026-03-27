@@ -31,7 +31,7 @@ impl GridMetrics {
         } else {
             config::BTN_SECTION_VERT_PADDING
         };
-        let button_width = area.width / config::BUTTONS_PER_ROW as u16;
+        let button_width = area.width / config::buttons_per_row() as u16;
         let max_rows = (area.height.saturating_sub(vert_padding) / row_height) as usize;
 
         Self {
@@ -67,8 +67,8 @@ impl ButtonLayout {
             return None;
         }
 
-        let start_button = scroll_row_offset * config::BUTTONS_PER_ROW;
-        let max_visible_buttons = metrics.max_rows * config::BUTTONS_PER_ROW;
+        let start_button = scroll_row_offset * config::buttons_per_row();
+        let max_visible_buttons = metrics.max_rows * config::buttons_per_row();
         let remaining = total_buttons.saturating_sub(start_button);
         let visible_count = remaining.min(max_visible_buttons);
         if visible_count == 0 {
@@ -112,7 +112,7 @@ impl ButtonLayout {
             return Vec::new();
         }
 
-        let columns = config::BUTTONS_PER_ROW;
+        let columns = config::buttons_per_row();
         let rows = self.visible_count.div_ceil(columns);
         let mut positions = Vec::new();
 
@@ -144,8 +144,8 @@ impl ButtonLayout {
 
 fn grid_position(index: usize) -> (usize, usize) {
     (
-        index / config::BUTTONS_PER_ROW,
-        index % config::BUTTONS_PER_ROW,
+        index / config::buttons_per_row(),
+        index % config::buttons_per_row(),
     )
 }
 
@@ -161,31 +161,32 @@ mod tests {
         let area = Rect::new(
             0,
             0,
-            config::BUTTONS_PER_ROW as u16 * 6,
+            config::buttons_per_row() as u16 * 6,
             config::BUTTON_HEIGHT + 2,
         );
-        let layout = ButtonLayout::new(area, config::BUTTONS_PER_ROW * 3, 1)
+        let layout = ButtonLayout::new(area, config::buttons_per_row() * 3, 1)
             .expect("layout should be renderable");
 
-        assert_eq!(layout.visible_count(), config::BUTTONS_PER_ROW);
-        assert_eq!(layout.button_index(0), config::BUTTONS_PER_ROW);
+        assert_eq!(layout.visible_count(), config::buttons_per_row());
+        assert_eq!(layout.button_index(0), config::buttons_per_row());
     }
 
     #[test]
     fn separator_positions_skip_missing_last_column() {
-        let area = Rect::new(0, 0, config::BUTTONS_PER_ROW as u16 * 3, 1);
+        let area = Rect::new(0, 0, config::buttons_per_row() as u16 * 3, 1);
         let layout =
-            ButtonLayout::new(area, config::BUTTONS_PER_ROW - 1, 0).expect("compact layout");
+            ButtonLayout::new(area, config::buttons_per_row() - 1, 0).expect("compact layout");
 
         assert_eq!(
             layout.separator_positions().len(),
-            config::BUTTONS_PER_ROW - 2
+            config::buttons_per_row() - 2
         );
     }
 
     #[test]
     fn grid_metrics_detect_compact_single_line_layout() {
-        let metrics = GridMetrics::for_area(Rect::new(0, 0, config::BUTTONS_PER_ROW as u16 * 3, 1));
+        let metrics =
+            GridMetrics::for_area(Rect::new(0, 0, config::buttons_per_row() as u16 * 3, 1));
 
         assert!(metrics.compact);
         assert!(metrics.renderable());

@@ -39,10 +39,10 @@ impl TouchRenderer {
             .y_bounds([f64::from(min_y), f64::from(max_y)])
             .paint(|ctx| {
                 if !inactive.is_empty() {
-                    ctx.draw(&Points::new(&inactive, config::COLOR_TOUCH_INACTIVE));
+                    ctx.draw(&Points::new(&inactive, config::color_touch_inactive()));
                 }
                 if !active.is_empty() {
-                    ctx.draw(&Points::new(&active, config::COLOR_TOUCH_POINT));
+                    ctx.draw(&Points::new(&active, config::color_touch_point()));
                 }
             })
             .render(area, buf);

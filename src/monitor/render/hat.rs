@@ -40,9 +40,9 @@ impl HatRenderer {
             .x_bounds([-1.0, 1.0])
             .y_bounds([-1.0, 1.0])
             .paint(|ctx| {
-                ctx.draw(&Points::new(&base_points, config::COLOR_TOUCH_INACTIVE));
+                ctx.draw(&Points::new(&base_points, config::color_touch_inactive()));
                 if !active_points.is_empty() {
-                    ctx.draw(&Points::new(&active_points, config::COLOR_TOUCH_POINT));
+                    ctx.draw(&Points::new(&active_points, config::color_touch_point()));
                 }
             })
             .render(square, buf);

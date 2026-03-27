@@ -57,6 +57,7 @@ pub(super) fn plan_top_row(
     joystick_columns: usize,
     minimums: BoxMinimums,
     request: TopRowRequest,
+    joystick_hat_joystick_percent: u16,
 ) -> TopRowLayout {
     let max_top = area.height.saturating_sub(minimums.reserved_below_top());
     match request {
@@ -66,9 +67,14 @@ pub(super) fn plan_top_row(
                 .unwrap_or_default()
         }
         TopRowRequest::Hat => hat_layout(area.width, max_top, minimums.hat).unwrap_or_default(),
-        TopRowRequest::Both => {
-            plan_dual_top_row(area.width, max_top, joystick_columns, minimums).unwrap_or_default()
-        }
+        TopRowRequest::Both => plan_dual_top_row(
+            area.width,
+            max_top,
+            joystick_columns,
+            minimums,
+            joystick_hat_joystick_percent,
+        )
+        .unwrap_or_default(),
     }
 }
 
@@ -76,6 +82,7 @@ pub(super) fn place_top_row(
     area: Rect,
     cursor_y: &mut u16,
     layout: TopRowLayout,
+    joystick_hat_joystick_percent: u16,
 ) -> (Option<Rect>, Option<Rect>) {
     let height = layout.height();
     if height == 0 {
@@ -97,7 +104,7 @@ pub(super) fn place_top_row(
                 area.width,
                 height,
                 gap,
-                config::JOYSTICK_HAT_JOYSTICK_PERCENT,
+                joystick_hat_joystick_percent,
             );
             (Some(left), Some(right))
         }
@@ -112,10 +119,10 @@ fn plan_dual_top_row(
     max_top: u16,
     joystick_columns: usize,
     minimums: BoxMinimums,
+    joystick_hat_joystick_percent: u16,
 ) -> Option<TopRowLayout> {
-    let gap = gap_if_room(width, config::JOYSTICK_GAP);
-    let (joystick_width, hat_width) =
-        ratio_widths(width, gap, config::JOYSTICK_HAT_JOYSTICK_PERCENT);
+    let gap = gap_if_room(width, config::joystick_gap());
+    let (joystick_width, hat_width) = ratio_widths(width, gap, joystick_hat_joystick_percent);
     let joystick_fit =
         joystick_height_for_width(joystick_width, max_top, minimums.joystick, joystick_columns);
     let hat_fit = hat_height_for_width(hat_width, max_top, minimums.hat);
@@ -156,7 +163,11 @@ fn joystick_height_for_width(
         return None;
     }
     let columns = columns.max(1) as u16;
-    let gap = if columns > 1 { config::JOYSTICK_GAP } else { 0 };
+    let gap = if columns > 1 {
+        config::joystick_gap()
+    } else {
+        0
+    };
     let width_per = width.saturating_sub(gap) / columns;
     bounded_square_height(width_per, max_height, min_height, config::JOYSTICK_MAX_SIZE)
 }
@@ -191,7 +202,7 @@ fn bounded_square_height(
 mod tests {
     use ratatui::layout::Rect;
 
-    use super::{TopRowLayout, TopRowRequest, plan_top_row};
+    use super::{TopRowLayout, TopRowRequest, place_top_row, plan_top_row};
     use crate::monitor::layout::boxes::{BoxMinimums, HatPanel, JoystickPanel, LayoutRequest};
 
     fn dual_top_row_request() -> LayoutRequest {
@@ -209,7 +220,7 @@ mod tests {
         let area = Rect::new(0, 0, 60, 12);
         let minimums = BoxMinimums::for_request(dual_top_row_request());
 
-        let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
+        let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both, 70);
 
         assert!(matches!(plan, TopRowLayout::Split { height, .. } if height > 0));
     }
@@ -219,7 +230,7 @@ mod tests {
         let area = Rect::new(0, 0, 20, 12);
         let minimums = BoxMinimums::for_request(dual_top_row_request());
 
-        let plan = plan_top_row(area, 2, minimums, TopRowRequest::Both);
+        let plan = plan_top_row(area, 2, minimums, TopRowRequest::Both, 70);
 
         assert!(matches!(plan, TopRowLayout::Hat { height } if height > 0));
     }
@@ -229,8 +240,22 @@ mod tests {
         let area = Rect::new(0, 0, 12, 6);
         let minimums = BoxMinimums::for_request(dual_top_row_request());
 
-        let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both);
+        let plan = plan_top_row(area, 1, minimums, TopRowRequest::Both, 70);
 
         assert!(matches!(plan, TopRowLayout::Joystick { height } if height > 0));
+    }
+
+    #[test]
+    fn place_top_row_respects_joystick_hat_split_percent() {
+        let area = Rect::new(0, 0, 40, 8);
+        let layout = TopRowLayout::Split { height: 6, gap: 0 };
+        let mut wide_cursor_y = area.y;
+        let mut narrow_cursor_y = area.y;
+
+        let (wide_joystick, wide_hat) = place_top_row(area, &mut wide_cursor_y, layout, 80);
+        let (narrow_joystick, narrow_hat) = place_top_row(area, &mut narrow_cursor_y, layout, 60);
+
+        assert!(wide_joystick.unwrap().width > narrow_joystick.unwrap().width);
+        assert!(wide_hat.unwrap().width < narrow_hat.unwrap().width);
     }
 }

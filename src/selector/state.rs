@@ -18,9 +18,13 @@ pub(super) struct SelectorState {
 }
 
 impl SelectorState {
-    pub(super) fn new(identifiers: &[String], error_message: Option<String>) -> Self {
+    pub(super) fn new(
+        identifiers: &[String],
+        error_message: Option<String>,
+        page_scroll_size: i32,
+    ) -> Self {
         Self {
-            filter: FilterState::new(identifiers.len()),
+            filter: FilterState::new(identifiers.len(), page_scroll_size),
             error_message,
             mode: SelectorMode::Browsing,
         }
@@ -181,7 +185,7 @@ mod tests {
     #[test]
     fn apply_discovery_resets_selection_and_updates_empty_state_error() {
         let initial = labels(&[]);
-        let mut state = SelectorState::new(&initial, None);
+        let mut state = SelectorState::new(&initial, None, 10);
         for c in "mouse".chars() {
             state.add_char(c, &initial);
         }
@@ -204,7 +208,7 @@ mod tests {
     #[test]
     fn reduce_back_exits_only_when_search_is_empty() {
         let devices = labels(&["mouse"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
         state.reduce(SelectorCommand::AddChar('m'), &devices);
 
         assert_eq!(
@@ -222,7 +226,7 @@ mod tests {
     #[test]
     fn reduce_select_refreshes_when_no_results_exist() {
         let devices = labels(&[]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         assert_eq!(
             state.reduce(SelectorCommand::Select, &devices),
@@ -233,7 +237,7 @@ mod tests {
     #[test]
     fn reduce_toggle_help_switches_between_browsing_and_help_modes() {
         let devices = labels(&["mouse"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         assert_eq!(state.mode(), super::SelectorMode::Browsing);
         assert_eq!(
@@ -252,7 +256,7 @@ mod tests {
     #[test]
     fn reduce_select_opens_the_current_selection_when_it_is_valid() {
         let devices = labels(&["mouse", "gamepad"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         assert_eq!(
             state.reduce(SelectorCommand::Select, &devices),
@@ -265,7 +269,7 @@ mod tests {
     fn reduce_select_stays_when_filtered_selection_is_stale() {
         let all_devices = labels(&["mouse", "gamepad"]);
         let current_devices = labels(&["mouse"]);
-        let mut state = SelectorState::new(&all_devices, None);
+        let mut state = SelectorState::new(&all_devices, None, 10);
         state.reduce(SelectorCommand::AddChar('g'), &all_devices);
 
         assert_eq!(state.filtered_indexes(), &[1]);
@@ -279,7 +283,7 @@ mod tests {
     #[test]
     fn reduce_refresh_returns_refresh_devices_transition() {
         let devices = labels(&["mouse"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         assert_eq!(
             state.reduce(SelectorCommand::Refresh, &devices),
@@ -290,7 +294,7 @@ mod tests {
     #[test]
     fn reduce_clear_search_clears_query_and_resets_selection() {
         let devices = labels(&["alpha", "beta", "gamma"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         state.reduce(SelectorCommand::AddChar('g'), &devices);
         state.reduce(SelectorCommand::MoveDown, &devices);
@@ -311,7 +315,7 @@ mod tests {
     #[test]
     fn reduce_delete_char_updates_query_and_filtered_indexes() {
         let devices = labels(&["gamepad", "gyro pad", "mouse"]);
-        let mut state = SelectorState::new(&devices, None);
+        let mut state = SelectorState::new(&devices, None, 10);
 
         state.reduce(SelectorCommand::AddChar('g'), &devices);
         state.reduce(SelectorCommand::AddChar('y'), &devices);
@@ -332,7 +336,8 @@ mod tests {
     #[test]
     fn reduce_none_clears_error_while_browsing() {
         let devices = labels(&[]);
-        let mut state = SelectorState::new(&devices, Some("unable to read /dev/input".to_string()));
+        let mut state =
+            SelectorState::new(&devices, Some("unable to read /dev/input".to_string()), 10);
 
         assert_eq!(
             state.reduce(SelectorCommand::None, &devices),
@@ -344,7 +349,8 @@ mod tests {
     #[test]
     fn reduce_none_keeps_error_while_help_is_open() {
         let devices = labels(&[]);
-        let mut state = SelectorState::new(&devices, Some("unable to read /dev/input".to_string()));
+        let mut state =
+            SelectorState::new(&devices, Some("unable to read /dev/input".to_string()), 10);
 
         assert_eq!(
             state.reduce(SelectorCommand::ToggleHelp, &devices),

@@ -1,13 +1,29 @@
-use ratatui::style::{Color, Style, palette::tailwind};
+use ratatui::style::{Color, Style};
 
-pub(crate) const TEXT_COLOR: Color = tailwind::SLATE.c200;
-pub(crate) const MUTED_COLOR: Color = tailwind::SLATE.c500;
-pub(crate) const ACCENT_COLOR: Color = tailwind::BLUE.c300;
-pub(crate) const ACCENT_STRONG_COLOR: Color = tailwind::BLUE.c400;
-pub(crate) const DANGER_COLOR: Color = tailwind::RED.c400;
+use crate::config;
+
+pub(crate) fn text_color() -> Color {
+    config::theme().palette.text
+}
+
+pub(crate) fn muted_color() -> Color {
+    config::theme().palette.muted
+}
+
+pub(crate) fn accent_color() -> Color {
+    config::theme().palette.accent
+}
+
+pub(crate) fn accent_strong_color() -> Color {
+    config::theme().palette.accent_strong
+}
+
+pub(crate) fn danger_color() -> Color {
+    config::theme().palette.danger
+}
 
 pub(crate) fn style_text() -> Style {
-    Style::new().fg(TEXT_COLOR)
+    Style::new().fg(text_color())
 }
 
 pub(crate) fn style_header() -> Style {
@@ -15,17 +31,17 @@ pub(crate) fn style_header() -> Style {
 }
 
 pub(crate) fn style_panel_focused() -> Style {
-    Style::new().fg(ACCENT_COLOR).bold()
+    Style::new().fg(accent_color()).bold()
 }
 
 pub(crate) fn style_panel_unfocused() -> Style {
-    Style::new().fg(MUTED_COLOR)
+    Style::new().fg(muted_color())
 }
 
 pub(crate) fn style_gauge() -> Style {
-    Style::new().fg(ACCENT_STRONG_COLOR)
+    Style::new().fg(accent_strong_color())
 }
 
 pub(crate) fn style_error() -> Style {
-    Style::new().fg(DANGER_COLOR).bold()
+    Style::new().fg(danger_color()).bold()
 }

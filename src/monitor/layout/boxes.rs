@@ -203,7 +203,12 @@ struct LowerSectionLayout {
 }
 
 impl LowerSectionLayout {
-    fn plan(remaining_height: u16, request: LayoutRequest, minimums: BoxMinimums) -> Self {
+    fn plan(
+        remaining_height: u16,
+        request: LayoutRequest,
+        minimums: BoxMinimums,
+        axes_box_percent: u16,
+    ) -> Self {
         match (request.has_axes(), request.has_buttons()) {
             (true, true) => {
                 if remaining_height < minimums.axes + minimums.buttons {
@@ -216,7 +221,7 @@ impl LowerSectionLayout {
                         Self::default()
                     }
                 } else {
-                    let desired_axes = (remaining_height * config::AXES_BOX_PERCENT) / 100;
+                    let desired_axes = (remaining_height * axes_box_percent) / 100;
                     let max_axes = remaining_height.saturating_sub(minimums.buttons);
                     let axes_height = desired_axes.clamp(minimums.axes, max_axes);
                     Self {
@@ -260,11 +265,13 @@ impl LowerSectionLayout {
 
 pub(crate) fn box_layout(area: Rect, request: LayoutRequest) -> BoxLayout {
     let minimums = BoxMinimums::for_request(request);
+    let joystick_hat_joystick_percent = config::joystick_hat_joystick_percent();
     let top_row = plan_top_row(
         area,
         request.joystick_columns(),
         minimums,
         request.top_row_request(),
+        joystick_hat_joystick_percent,
     );
 
     let mut budget = LayoutBudget::new(area.height);
@@ -273,10 +280,16 @@ pub(crate) fn box_layout(area: Rect, request: LayoutRequest) -> BoxLayout {
     let touch = plan_touch(budget, request, minimums);
     budget.reserve(touch.height());
 
-    let lower = LowerSectionLayout::plan(budget.remaining(), request, minimums);
+    let lower = LowerSectionLayout::plan(
+        budget.remaining(),
+        request,
+        minimums,
+        config::axes_box_percent(),
+    );
 
     let mut cursor_y = area.y;
-    let (joystick_box, hat_box) = place_top_row(area, &mut cursor_y, top_row);
+    let (joystick_box, hat_box) =
+        place_top_row(area, &mut cursor_y, top_row, joystick_hat_joystick_percent);
     let touch_box = if touch.is_visible() {
         take_next_box(area, &mut cursor_y, touch.height(), minimums.touch)
     } else {
@@ -459,9 +472,26 @@ mod tests {
         );
         let minimums = super::BoxMinimums::for_request(request);
 
-        let lower = LowerSectionLayout::plan(1, request, minimums);
+        let lower = LowerSectionLayout::plan(1, request, minimums, 75);
 
         assert_eq!(lower.axes_height(), 0);
         assert_eq!(lower.buttons_height(), 1);
+    }
+
+    #[test]
+    fn lower_section_layout_respects_axes_box_percent() {
+        let request = request(
+            None,
+            None,
+            None,
+            Some(AxesPanel::new()),
+            Some(ButtonsPanel::new()),
+        );
+        let minimums = super::BoxMinimums::for_request(request);
+
+        let lower = LowerSectionLayout::plan(20, request, minimums, 60);
+
+        assert_eq!(lower.axes_height(), 12);
+        assert_eq!(lower.buttons_height(), 8);
     }
 }

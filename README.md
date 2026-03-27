@@ -19,7 +19,32 @@ The exact group or udev rule is distro-specific.
 cargo run --release
 ```
 
-`evtr` does not currently expose any command-line flags.
+### Config
+
+`evtr` reads config from:
+
+- `--config <path>` when provided
+- `$XDG_CONFIG_HOME/evtr/config.toml` when that file exists
+- `~/.config/evtr/config.toml` when the XDG file does not exist and the fallback file does
+
+To generate a starter config file:
+
+```sh
+cargo run --release -- --generate-config
+```
+
+To write the starter config to a specific path:
+
+```sh
+cargo run --release -- --config /path/to/evtr.toml --generate-config
+```
+
+Other config-related flags:
+
+- `--print-config-path`
+- `--print-default-config`
+
+Config is strict: unknown fields, invalid values, and duplicate/conflicting key bindings fail fast.
 
 ## Controls
 

@@ -22,6 +22,7 @@ use self::{
     view::render_selector,
 };
 use crate::{
+    config,
     error::{ErrorArea, Result},
     evtr::State,
 };
@@ -43,9 +44,14 @@ pub(crate) struct DeviceSelector {
 impl DeviceSelector {
     fn new(error_message: Option<String>) -> Self {
         let (devices, discovery_error) = Self::load_devices();
+        let selector_config = config::selector();
 
         Self {
-            state: SelectorState::new(devices.labels(), error_message.or(discovery_error)),
+            state: SelectorState::new(
+                devices.labels(),
+                error_message.or(discovery_error),
+                selector_config.page_scroll_size,
+            ),
             devices,
         }
     }
@@ -62,7 +68,7 @@ impl DeviceSelector {
     }
 
     fn load_devices() -> (DeviceCatalog, Option<String>) {
-        DeviceCatalog::from_discovery(discover_devices(Self::open_device))
+        DeviceCatalog::from_discovery(discover_devices(Self::open_device), config::selector().sort)
     }
 
     fn refresh_devices(&mut self) {

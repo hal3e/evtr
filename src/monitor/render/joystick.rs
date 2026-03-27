@@ -27,7 +27,7 @@ impl JoystickRenderer {
                 Self::render_stick(area, stick, invert_y, buf);
             }
             (Some(left), Some(right)) => {
-                let (left_area, right_area) = centered_pair(area, config::JOYSTICK_GAP);
+                let (left_area, right_area) = centered_pair(area, config::joystick_gap());
                 Self::render_stick(left_area, left, invert_y, buf);
                 Self::render_stick(right_area, right, invert_y, buf);
             }
@@ -48,10 +48,10 @@ impl JoystickRenderer {
             .x_bounds([-1.0, 1.0])
             .y_bounds([-1.0, 1.0])
             .paint(|ctx| {
-                let axis_color = config::COLOR_TOUCH_INACTIVE;
+                let axis_color = config::color_touch_inactive();
                 ctx.draw(&Line::new(-1.0, 0.0, 1.0, 0.0, axis_color));
                 ctx.draw(&Line::new(0.0, -1.0, 0.0, 1.0, axis_color));
-                ctx.draw(&Points::new(&[point], config::COLOR_TOUCH_POINT));
+                ctx.draw(&Points::new(&[point], config::color_touch_point()));
             })
             .render(square, buf);
     }

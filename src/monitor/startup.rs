@@ -1,6 +1,7 @@
 use evdev::{Device, InputId};
 
 use super::{model::InputCollection, plan::Counts, state::MonitorState, touch::TouchState};
+use crate::config;
 
 pub(super) struct StartupValue<T> {
     value: T,
@@ -51,7 +52,12 @@ impl MonitorStartup {
         Self {
             inputs,
             touch,
-            state: MonitorState::new(counts, info_lines),
+            state: MonitorState::new(
+                counts,
+                info_lines,
+                config::monitor().startup_focus,
+                config::monitor().joystick_invert_y,
+            ),
         }
     }
 }

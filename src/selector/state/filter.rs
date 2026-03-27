@@ -1,21 +1,21 @@
 use fuzzy_matcher::{FuzzyMatcher, skim::SkimMatcherV2};
 
-const PAGE_SCROLL_SIZE: i32 = 10;
-
 pub(super) struct FilterState {
     indexes: Vec<usize>,
     selected_index: usize,
     query: String,
     matcher: SkimMatcherV2,
+    page_scroll_size: i32,
 }
 
 impl FilterState {
-    pub(super) fn new(item_count: usize) -> Self {
+    pub(super) fn new(item_count: usize, page_scroll_size: i32) -> Self {
         Self {
             indexes: (0..item_count).collect(),
             selected_index: 0,
             query: String::new(),
             matcher: SkimMatcherV2::default(),
+            page_scroll_size,
         }
     }
 
@@ -51,11 +51,11 @@ impl FilterState {
     }
 
     pub(super) fn page_up(&mut self) {
-        self.move_selection_by(-PAGE_SCROLL_SIZE);
+        self.move_selection_by(-self.page_scroll_size);
     }
 
     pub(super) fn page_down(&mut self) {
-        self.move_selection_by(PAGE_SCROLL_SIZE);
+        self.move_selection_by(self.page_scroll_size);
     }
 
     pub(super) fn select_first(&mut self) {
@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn move_selection_by_clamps_to_the_filtered_bounds() {
-        let mut filter = FilterState::new(3);
+        let mut filter = FilterState::new(3, 10);
 
         filter.move_selection_by(10);
         assert_eq!(filter.selected_index(), 2);
@@ -181,7 +181,7 @@ mod tests {
 
     #[test]
     fn select_last_uses_the_last_filtered_match() {
-        let mut filter = FilterState::new(4);
+        let mut filter = FilterState::new(4, 10);
         filter.select_last();
 
         assert_eq!(filter.selected_item_index(), Some(3));
@@ -189,7 +189,7 @@ mod tests {
 
     #[test]
     fn page_navigation_uses_the_shared_page_size() {
-        let mut filter = FilterState::new(25);
+        let mut filter = FilterState::new(25, 10);
 
         filter.page_down();
         assert_eq!(filter.selected_index(), 10);

@@ -60,7 +60,7 @@ impl ButtonGrid {
         if compact {
             let mut label_style = config::style_label();
             if pressed {
-                label_style = label_style.bg(config::COLOR_BUTTON_PRESSED);
+                label_style = label_style.bg(config::color_button_pressed());
             }
             Paragraph::new(text)
                 .alignment(Alignment::Center)
@@ -68,7 +68,7 @@ impl ButtonGrid {
                 .render(area, buf);
         } else {
             let bg = if pressed {
-                config::COLOR_BUTTON_PRESSED
+                config::color_button_pressed()
             } else {
                 Color::default()
             };
@@ -124,8 +124,8 @@ mod tests {
 
     #[test]
     fn render_with_scroll_shows_partial_last_row() {
-        let inputs = build_buttons((config::BUTTONS_PER_ROW * 2) + 1);
-        let width = config::BUTTONS_PER_ROW as u16 * 6;
+        let inputs = build_buttons((config::buttons_per_row() * 2) + 1);
+        let width = config::buttons_per_row() as u16 * 6;
         let height = config::BTN_SECTION_VERT_PADDING + (config::BUTTON_HEIGHT * 2);
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -139,8 +139,8 @@ mod tests {
 
     #[test]
     fn render_with_scroll_offsets_by_button_row() {
-        let inputs = build_buttons(config::BUTTONS_PER_ROW * 3);
-        let width = config::BUTTONS_PER_ROW as u16 * 6;
+        let inputs = build_buttons(config::buttons_per_row() * 3);
+        let width = config::buttons_per_row() as u16 * 6;
         let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -154,8 +154,8 @@ mod tests {
 
     #[test]
     fn render_with_scroll_skips_when_too_narrow() {
-        let inputs = build_buttons(config::BUTTONS_PER_ROW);
-        let width = config::BUTTONS_PER_ROW as u16;
+        let inputs = build_buttons(config::buttons_per_row());
+        let width = config::buttons_per_row() as u16;
         let height = config::BTN_SECTION_VERT_PADDING + config::BUTTON_HEIGHT;
         let area = Rect::new(0, 0, width, height);
         let mut buf = Buffer::empty(area);
@@ -167,8 +167,8 @@ mod tests {
 
     #[test]
     fn render_compact_buttons_in_single_line() {
-        let inputs = build_buttons(config::BUTTONS_PER_ROW);
-        let width = config::BUTTONS_PER_ROW as u16 * 3;
+        let inputs = build_buttons(config::buttons_per_row());
+        let width = config::buttons_per_row() as u16 * 3;
         let area = Rect::new(0, 0, width, 1);
         let mut buf = Buffer::empty(area);
 

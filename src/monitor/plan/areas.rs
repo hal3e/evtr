@@ -60,7 +60,7 @@ pub(super) fn plan_areas(
 
     let axes_present = view_model.axes_available() && main_area.width >= config::AXIS_MIN_WIDTH;
     let touch_present = view_model.touch_enabled() && main_area.width >= config::TOUCHPAD_MIN_WIDTH;
-    let button_width = main_area.width / config::BUTTONS_PER_ROW as u16;
+    let button_width = main_area.width / config::buttons_per_row() as u16;
     let buttons_present = view_model.buttons_available() && button_width > min_button_gap;
 
     let (layout, buttons_box) = if let Some(buttons_area) = buttons_column {
