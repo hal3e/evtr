@@ -4,28 +4,67 @@
 device from `/dev/input/event*`, then watch axes, relative motion, buttons,
 hats, joysticks, and touch state update live.
 
+## Screenshots
+
+### Selector
+
+![Device selector](assets/screenshots/selector.png)
+
+### Gamepad
+
+![Gamepad monitor view](assets/screenshots/monitor-gamepad.png)
+
+### Touchpad
+
+![Touchpad monitor view](assets/screenshots/monitor-touchpad.png)
+
+### Mouse
+
+![Mouse monitor view](assets/screenshots/monitor-mouse.png)
+
 ## Requirements
 
 - Linux with evdev support
+- Rust 1.85 or newer to build from source
 - A terminal supported by `crossterm`
 - Permission to read the selected `/dev/input/event*` node
 
 If you see permission errors, grant your user read access to the relevant input devices.
 The exact group or udev rule is distro-specific.
 
-## Run
+## Install And Run
+
+Build the release binary from a checkout:
+
+```sh
+cargo build --release
+./target/release/evtr
+```
+
+Install it into your Cargo bin directory from the local checkout:
+
+```sh
+cargo install --path .
+evtr
+```
+
+Or run it directly without installing:
 
 ```sh
 cargo run --release
 ```
 
-### Config
+## Config
 
 `evtr` reads config from:
 
 - `--config <path>` when provided
 - `$XDG_CONFIG_HOME/evtr/config.toml` when that file exists
 - `~/.config/evtr/config.toml` when the XDG file does not exist and the fallback file does
+
+When `XDG_CONFIG_HOME` is set to an absolute path, `--generate-config` and
+`--print-config-path` use `$XDG_CONFIG_HOME/evtr/config.toml` even if the
+directory does not exist yet.
 
 To generate a starter config file:
 
@@ -41,34 +80,24 @@ cargo run --release -- --config /path/to/evtr.toml --generate-config
 
 Other config-related flags:
 
-- `--print-config-path`
-- `--print-default-config`
+- `--print-config-path`: print the path used for config generation
+- `--print-default-config`: print the full default TOML template
 
 Config is strict: unknown fields, invalid values, and duplicate/conflicting key bindings fail fast.
 
+### Config Reference
+
+`--print-default-config` prints the complete supported config surface. The
+high-level sections are:
+
+- `selector`: device sort order and selector page size
+- `monitor`: page scroll size, startup focus, joystick inversion, and relative axis range
+- `theme.palette`: five hex colors used by the TUI
+- `layout.selector` and `layout.monitor`: panel sizing knobs
+- `keys.selector` and `keys.monitor`: explicit key binding lists
+
 ## Controls
-
-### Selector
-
-- Type to filter devices
-- Up/Down, Ctrl-P/Ctrl-N, PageUp/PageDown, Home/End to move
-- Enter to open the selected device
-- Backspace or Ctrl-U to edit or clear the query
-- Ctrl-R to refresh device discovery
 - `?` to open help
-- Esc or Ctrl-C to exit
-
-### Monitor
-
-- Up/Down or j/k to scroll
-- PageUp/PageDown and g/G or Home/End to jump
-- Shift-J and Shift-K to move focus between axes and buttons when both are visible
-- r to reset relative axes
-- i to show device info
-- y to invert joystick Y rendering
-- `?` to open help
-- Esc to return to the selector when no popup is open
-- Ctrl-C to exit the app
 
 ## Failure Modes
 
@@ -78,16 +107,3 @@ Config is strict: unknown fields, invalid values, and duplicate/conflicting key 
 - Event nodes exist but cannot be opened
 - The selected device stream ends or returns an I/O error
 - Terminal initialization or redraw fails
-
-## Development
-
-```sh
-cargo fmt
-cargo check
-cargo clippy --all-targets --all-features -- -D warnings
-cargo test
-```
-
-## License
-
-MIT. See `LICENSE`.

@@ -39,9 +39,7 @@ pub(crate) fn resolved_write_path(explicit_path: Option<&Path>) -> Result<PathBu
     }
 
     if let Some(root) = xdg_config_root() {
-        if root.exists() {
-            return Ok(root.join(APP_NAME).join(CONFIG_FILE_NAME));
-        }
+        return Ok(root.join(APP_NAME).join(CONFIG_FILE_NAME));
     }
 
     dot_config_path()
@@ -93,28 +91,27 @@ mod tests {
     }
 
     #[test]
-    fn resolved_write_path_prefers_existing_xdg_root() {
+    fn resolved_write_path_uses_absolute_xdg_root_even_when_missing() {
         let _guard = ENV_LOCK.lock().unwrap();
-        let tmp = tempfile_dir("config-xdg");
         let home = tempfile_dir("config-home");
+        let xdg = home.join("missing-xdg-root");
         let old_home = set_env("HOME", Some(home.to_str().unwrap()));
-        let old_xdg = set_env("XDG_CONFIG_HOME", Some(tmp.to_str().unwrap()));
+        let old_xdg = set_env("XDG_CONFIG_HOME", Some(xdg.to_str().unwrap()));
 
         let path = resolved_write_path(None).unwrap();
 
         restore_env("HOME", old_home);
         restore_env("XDG_CONFIG_HOME", old_xdg);
 
-        assert!(path.starts_with(tmp));
+        assert_eq!(path, xdg.join("evtr").join("config.toml"));
     }
 
     #[test]
-    fn resolved_write_path_falls_back_to_home_config_when_xdg_root_is_missing() {
+    fn resolved_write_path_falls_back_to_home_config_when_xdg_root_is_relative() {
         let _guard = ENV_LOCK.lock().unwrap();
         let home = tempfile_dir("config-home");
-        let missing = home.join("missing-xdg");
         let old_home = set_env("HOME", Some(home.to_str().unwrap()));
-        let old_xdg = set_env("XDG_CONFIG_HOME", Some(missing.to_str().unwrap()));
+        let old_xdg = set_env("XDG_CONFIG_HOME", Some("relative-xdg"));
 
         let path = resolved_write_path(None).unwrap();
 

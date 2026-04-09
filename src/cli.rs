@@ -7,13 +7,17 @@ use crate::{config, error::Result};
 #[derive(Parser, Debug)]
 #[command(author, version, about, long_about = None)]
 struct Cli {
-    #[arg(long)]
+    #[arg(
+        long,
+        value_name = "PATH",
+        help = "Read config from PATH, or write generated config to PATH"
+    )]
     config: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long, help = "Write a starter config file to the resolved config path")]
     generate_config: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print the config path that --generate-config would use")]
     print_config_path: bool,
-    #[arg(long)]
+    #[arg(long, help = "Print the default config TOML to stdout")]
     print_default_config: bool,
 }
 
